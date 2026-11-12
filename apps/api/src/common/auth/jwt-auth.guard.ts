@@ -5,14 +5,18 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { AuthService } from '../../modules/auth/auth.service';
 import type { RequestWithContext } from '../types/api-response.type';
 import { IS_PUBLIC_KEY } from './public.decorator';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly authService: AuthService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -26,14 +30,17 @@ export class JwtAuthGuard implements CanActivate {
     const token = this.extractBearerToken(request);
 
     if (!token) {
-      throw new UnauthorizedException('Missing bearer authentication token');
+      throw new UnauthorizedException({
+        code: 'UNAUTHORIZED',
+        message: 'Authentication required',
+      });
     }
 
-    if (!request.user) {
-      throw new UnauthorizedException(
-        'Token verification is not implemented yet',
-      );
-    }
+    const { user, sessionId } =
+      await this.authService.validateAccessToken(token);
+
+    request.user = user;
+    request.sessionId = sessionId;
 
     return true;
   }
@@ -44,11 +51,11 @@ export class JwtAuthGuard implements CanActivate {
       return null;
     }
 
-    const [scheme, token] = authorization.split(' ');
-    if (scheme?.toLowerCase() !== 'bearer' || !token) {
+    const parts = authorization.trim().split(/\s+/);
+    if (parts.length !== 2 || parts[0]?.toLowerCase() !== 'bearer' || !parts[1]) {
       return null;
     }
 
-    return token;
+    return parts[1];
   }
 }

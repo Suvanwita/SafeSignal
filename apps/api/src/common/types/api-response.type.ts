@@ -32,10 +32,21 @@ export interface ApiErrorResponse {
 export interface AuthenticatedUser {
   id: string;
   email: string;
-  displayName?: string | null;
+  displayName: string | null;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface JwtAccessPayload {
+  sub: string;
+  email: string;
+  sid: string;
+  jti: string;
 }
 
 export interface RequestWithContext extends Request {
   requestId?: string;
   user?: AuthenticatedUser;
+  sessionId?: string;
 }

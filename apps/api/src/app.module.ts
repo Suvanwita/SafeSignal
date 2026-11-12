@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import {
   AllExceptionsFilter,
   JwtAuthGuard,
@@ -42,6 +43,13 @@ import { PrismaModule } from './prisma/prisma.module';
     }),
     LoggingModule,
     PrismaModule,
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: 60_000,
+        limit: 60,
+      },
+    ]),
     HealthModule,
     AuthModule,
     UsersModule,
@@ -54,6 +62,10 @@ import { PrismaModule } from './prisma/prisma.module';
     ReportsModule,
   ],
   providers: [
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
     {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,

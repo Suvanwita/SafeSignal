@@ -1,4 +1,5 @@
 export * from './auth/authorization.util';
+export * from './auth/current-session.decorator';
 export * from './auth/current-user.decorator';
 export * from './auth/jwt-auth.guard';
 export * from './auth/public.decorator';

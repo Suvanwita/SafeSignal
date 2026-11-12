@@ -9,6 +9,7 @@
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
+    "types": ["node", "jest"],
     "sourceMap": true,
     "rootDir": "./src",
     "outDir": "./dist",
