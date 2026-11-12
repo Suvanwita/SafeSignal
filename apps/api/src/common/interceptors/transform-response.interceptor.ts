@@ -4,6 +4,7 @@ import {
   Injectable,
   NestInterceptor,
   SetMetadata,
+  StreamableFile,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, map } from 'rxjs';
@@ -43,15 +44,20 @@ export class TransformResponseInterceptor<T> implements NestInterceptor<
     const request = context.switchToHttp().getRequest<RequestWithContext>();
 
     return next.handle().pipe(
-      map((data) => ({
-        success: true as const,
-        data,
-        meta: {
-          timestamp: new Date().toISOString(),
-          path: request.originalUrl,
-          ...(request.requestId ? { requestId: request.requestId } : {}),
-        },
-      })),
+      map((data) => {
+        if (data instanceof StreamableFile) {
+          return data;
+        }
+        return {
+          success: true as const,
+          data,
+          meta: {
+            timestamp: new Date().toISOString(),
+            path: request.originalUrl,
+            ...(request.requestId ? { requestId: request.requestId } : {}),
+          },
+        };
+      }),
     );
   }
 }

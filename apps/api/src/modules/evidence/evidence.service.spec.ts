@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { EvidenceService } from './evidence.service';
+import type { VaultStorageService } from './vault-storage.service';
 
 describe('EvidenceService', () => {
   let service: EvidenceService;
@@ -27,6 +28,13 @@ describe('EvidenceService', () => {
     $transaction: jest.Mock;
   };
 
+  let vaultStorage: {
+    saveFile: jest.Mock;
+    getReadStream: jest.Mock;
+    deleteFile: jest.Mock;
+    getVaultRoot: jest.Mock;
+  };
+
   const userId = '11111111-1111-1111-1111-111111111111';
   const otherUserId = '22222222-2222-2222-2222-222222222222';
   const incidentId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -43,7 +51,7 @@ describe('EvidenceService', () => {
     title: 'Chat screenshot',
     description: 'Screenshot showing extortion attempt',
     sourceUrl: 'https://x.com/harasser/status/123456',
-    storageKey: 'evidence/chat.png',
+    storageKey: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/uuid-1234.png',
     fileName: 'chat.png',
     mimeType: 'image/png',
     fileSize: 102400,
@@ -84,10 +92,181 @@ describe('EvidenceService', () => {
       ),
     };
 
-    service = new EvidenceService(prisma as unknown as PrismaService);
+    vaultStorage = {
+      saveFile: jest.fn().mockResolvedValue({
+        storageKey: `${incidentId}/random-uuid.png`,
+        absolutePath: `/storage/evidence-vault/${incidentId}/random-uuid.png`,
+      }),
+      getReadStream: jest.fn().mockResolvedValue({
+        stream: { pipe: jest.fn() },
+        size: 102400,
+      }),
+      deleteFile: jest.fn().mockResolvedValue(undefined),
+      getVaultRoot: jest.fn().mockReturnValue('/storage/evidence-vault'),
+    };
+
+    service = new EvidenceService(
+      prisma as unknown as PrismaService,
+      vaultStorage as unknown as VaultStorageService,
+    );
   });
 
-  describe('createForUser', () => {
+  describe('uploadForUser (SafeSignal Evidence Vault)', () => {
+    it('validates file signature, saves to private filesystem vault, and records evidence in DB with timeline event', async () => {
+      prisma.incident.findUnique.mockResolvedValueOnce({
+        id: incidentId,
+        userId,
+      });
+
+      const pngBuffer = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from('PNG_IMAGE_BODY'),
+      ]);
+
+      const mockFile: Express.Multer.File = {
+        fieldname: 'file',
+        originalname: 'threat_dm.png',
+        encoding: '7bit',
+        mimetype: 'image/png',
+        size: pngBuffer.length,
+        buffer: pngBuffer,
+        destination: '',
+        filename: 'threat_dm.png',
+        path: '',
+        stream: null as any,
+      };
+
+      prisma.evidence.create.mockResolvedValueOnce({
+        ...baseEvidence,
+        fileName: 'threat_dm.png',
+      });
+
+      const result = await service.uploadForUser(userId, mockFile, {
+        incidentId,
+        title: 'Extortion screenshot',
+        description: 'Captured evidence of extortion demands',
+      });
+
+      expect(vaultStorage.saveFile).toHaveBeenCalledWith(
+        incidentId,
+        '.png',
+        pngBuffer,
+      );
+      expect(prisma.evidence.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId,
+            incidentId,
+            title: 'Extortion screenshot',
+            fileName: 'threat_dm.png',
+            mimeType: 'image/png',
+            storageKey: `${incidentId}/random-uuid.png`,
+          }),
+        }),
+      );
+      expect(prisma.timelineEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            eventType: 'EVIDENCE_ATTACHED',
+            incidentId,
+          }),
+        }),
+      );
+      // Ensure storageKey is not leaked in the returned DTO
+      expect(result.storageKey).toBeNull();
+      expect(result.fileName).toBe('threat_dm.png');
+    });
+
+    it('rejects upload if incident belongs to another user', async () => {
+      prisma.incident.findUnique.mockResolvedValueOnce({
+        id: incidentId,
+        userId: otherUserId, // Different owner
+      });
+
+      const pngBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+      const mockFile: Express.Multer.File = {
+        fieldname: 'file',
+        originalname: 'file.png',
+        encoding: '7bit',
+        mimetype: 'image/png',
+        size: pngBuffer.length,
+        buffer: pngBuffer,
+        destination: '',
+        filename: 'file.png',
+        path: '',
+        stream: null as any,
+      };
+
+      await expect(
+        service.uploadForUser(userId, mockFile, { incidentId }),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(vaultStorage.saveFile).not.toHaveBeenCalled();
+    });
+
+    it('rejects upload with invalid file signature (tampered extension)', async () => {
+      prisma.incident.findUnique.mockResolvedValueOnce({
+        id: incidentId,
+        userId,
+      });
+
+      const fakePngBuffer = Buffer.from('NOT_A_VALID_PNG_MAGIC_BYTES');
+      const mockFile: Express.Multer.File = {
+        fieldname: 'file',
+        originalname: 'fake.png',
+        encoding: '7bit',
+        mimetype: 'image/png',
+        size: fakePngBuffer.length,
+        buffer: fakePngBuffer,
+        destination: '',
+        filename: 'fake.png',
+        path: '',
+        stream: null as any,
+      };
+
+      await expect(
+        service.uploadForUser(userId, mockFile, { incidentId }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(vaultStorage.saveFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getFileStreamForUser (Secure Vault Download)', () => {
+    it('returns file stream for authenticated owner without exposing filesystem paths', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+
+      const downloadResult = await service.getFileStreamForUser(userId, evidenceId);
+
+      expect(downloadResult.filename).toBe('chat.png');
+      expect(downloadResult.mimeType).toBe('image/png');
+      expect(downloadResult.size).toBe(102400);
+      expect(vaultStorage.getReadStream).toHaveBeenCalledWith(baseEvidence.storageKey);
+    });
+
+    it('enforces ownership checks and rejects unauthorized download with 403', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce({
+        ...baseEvidence,
+        userId: otherUserId,
+      });
+
+      await expect(
+        service.getFileStreamForUser(userId, evidenceId),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(vaultStorage.getReadStream).not.toHaveBeenCalled();
+    });
+
+    it('throws NotFoundException when evidence record is missing', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getFileStreamForUser(userId, evidenceId),
+      ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('createForUser (Metadata Backward Compatibility)', () => {
     it('creates evidence record linked to incident and emits EVIDENCE_ATTACHED timeline event', async () => {
       prisma.incident.findUnique.mockResolvedValueOnce({
         id: incidentId,
@@ -197,7 +376,7 @@ describe('EvidenceService', () => {
   });
 
   describe('removeForUser', () => {
-    it('deletes evidence record and emits EVIDENCE_REMOVED timeline event', async () => {
+    it('deletes evidence record and vault file, emitting EVIDENCE_REMOVED timeline event', async () => {
       prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
 
       const result = await service.removeForUser(userId, evidenceId);
@@ -207,6 +386,7 @@ describe('EvidenceService', () => {
       expect(prisma.evidence.delete).toHaveBeenCalledWith({
         where: { id: evidenceId },
       });
+      expect(vaultStorage.deleteFile).toHaveBeenCalledWith(baseEvidence.storageKey);
       expect(prisma.timelineEvent.create).toHaveBeenCalledWith(
         expect.objectContaining({
           data: expect.objectContaining({

@@ -55,6 +55,7 @@ export function AppShell({
             item.href !== '/identity' &&
             item.href !== '/intelligence' &&
             item.href !== '/abuse' &&
+            item.href !== '/evidence' &&
             item.href !== '/'
           ) {
             notify.info(

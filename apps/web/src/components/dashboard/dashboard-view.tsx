@@ -227,6 +227,10 @@ export function DashboardView({
       router.push('/identity');
       return;
     }
+    if (title === 'Upload evidence') {
+      router.push('/evidence');
+      return;
+    }
     notify.info(
       title,
       'This module workflow will open directly once feature pages are connected.',

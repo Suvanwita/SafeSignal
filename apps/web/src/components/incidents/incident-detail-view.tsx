@@ -8,8 +8,11 @@ import {
   AlertTriangle,
   ArrowLeft,
   Calendar,
+  Check,
   CheckCircle2,
   Clock,
+  Copy,
+  Download,
   ExternalLink,
   FileText,
   FolderLock,
@@ -20,6 +23,7 @@ import {
   Unlink,
   UserX,
 } from 'lucide-react';
+import { UploadEvidenceDialog } from '@/components/evidence/upload-evidence-dialog';
 import { AppShell } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -69,6 +73,10 @@ import {
   type IncidentDetail,
   type IncidentStatus,
 } from '@/lib/incidents/types';
+import {
+  formatBytes,
+  getFileFormatCategory,
+} from '@/lib/evidence/types';
 import type { SuspiciousProfile } from '@/lib/intelligence/types';
 
 export interface IncidentDetailViewProps {
@@ -137,6 +145,27 @@ export function IncidentDetailView({
   const [linkReportDialogOpen, setLinkReportDialogOpen] = React.useState(false);
   const [selectedReportId, setSelectedReportId] = React.useState('');
   const [isLinkingReport, setIsLinkingReport] = React.useState(false);
+
+  // Evidence Vault Dialog & State
+  const [uploadEvidenceDialogOpen, setUploadEvidenceDialogOpen] = React.useState(false);
+  const [copiedShaId, setCopiedShaId] = React.useState<string | null>(null);
+
+  const handleCopySha = (id: string, sha: string) => {
+    navigator.clipboard.writeText(sha);
+    setCopiedShaId(id);
+    notify.verified('Hash copied', 'SHA-256 checksum copied to clipboard.');
+    setTimeout(() => setCopiedShaId((c) => (c === id ? null : c)), 2500);
+  };
+
+  const handleDownloadEvidence = (ev: { id: string; fileName: string | null }) => {
+    const downloadUrl = `/api/evidence/${encodeURIComponent(ev.id)}/download`;
+    const link = document.createElement('a');
+    link.href = downloadUrl;
+    link.download = ev.fileName || 'evidence-file';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   const refreshIncident = React.useCallback(async () => {
     setIsRefreshing(true);
@@ -609,51 +638,143 @@ export function IncidentDetailView({
         </Card>
 
         {/* SECTION 3: EVIDENCE RECORDS */}
-        {incident.evidence.length > 0 && (
-          <Card className="border-slate-200">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Evidence Records</CardTitle>
+        <Card className="border-slate-200">
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-base">Evidence Vault Records</CardTitle>
+                <Badge variant="neutral" className="text-[11px] font-semibold text-slate-600">
+                  {incident.evidence.length}
+                </Badge>
+              </div>
               <CardDescription>
-                Cryptographically hashed snapshots, captures, and source logs.
+                Cryptographically hashed snapshots, captures, and source logs stored in the private Evidence Vault.
               </CardDescription>
-            </CardHeader>
-            <CardContent>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setUploadEvidenceDialogOpen(true)}
+              className="gap-1.5 text-xs font-semibold text-slate-700"
+            >
+              <Plus className="h-3.5 w-3.5 text-slate-500" />
+              Upload Evidence
+            </Button>
+          </CardHeader>
+          <CardContent>
+            {incident.evidence.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-slate-200 p-6 text-center">
+                <FolderLock className="mx-auto h-8 w-8 text-slate-300" />
+                <p className="mt-2 text-sm font-semibold text-slate-700">No evidence attached to this incident</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Upload screenshots, PDF exports, or harassment records to securely preserve case evidence.
+                </p>
+                <Button
+                  size="sm"
+                  onClick={() => setUploadEvidenceDialogOpen(true)}
+                  className="mt-4 gap-1.5 bg-blue-600 text-white hover:bg-blue-700 text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Upload First Evidence File
+                </Button>
+              </div>
+            ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
                     <TableHead>Title</TableHead>
-                    <TableHead>Filename</TableHead>
+                    <TableHead>Filename & Size</TableHead>
+                    <TableHead>Format</TableHead>
                     <TableHead>SHA-256 Checksum</TableHead>
                     <TableHead>Captured</TableHead>
+                    <TableHead className="text-right">Action</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {incident.evidence.map((ev) => (
-                    <TableRow key={ev.id}>
-                      <TableCell className="font-medium text-slate-900">
-                        {ev.title}
-                        {ev.description && (
-                          <p className="line-clamp-1 text-xs text-slate-500">
-                            {ev.description}
-                          </p>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs text-slate-700">
-                        {ev.fileName ?? '—'}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-slate-500">
-                        {ev.sha256 ? `${ev.sha256.slice(0, 16)}...` : '—'}
-                      </TableCell>
-                      <TableCell className="text-xs text-slate-500">
-                        {formatDateTime(ev.capturedAt ?? ev.createdAt)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {incident.evidence.map((ev) => {
+                    const format = getFileFormatCategory(ev.fileName, ev.mimeType);
+                    return (
+                      <TableRow key={ev.id}>
+                        <TableCell className="font-medium text-slate-900">
+                          {ev.title}
+                          {ev.description && (
+                            <p className="line-clamp-1 text-xs text-slate-500">
+                              {ev.description}
+                            </p>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-700">
+                          <span className="font-mono">{ev.fileName ?? '—'}</span>
+                          {ev.fileSize ? (
+                            <span className="ml-1 text-[11px] text-slate-400">
+                              ({formatBytes(ev.fileSize)})
+                            </span>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="neutral"
+                            className={`text-[10px] font-bold ${
+                              format === 'PNG'
+                                ? 'border-blue-200 bg-blue-50 text-blue-700'
+                                : format === 'JPG'
+                                  ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                                  : format === 'PDF'
+                                    ? 'border-red-200 bg-red-50 text-red-700'
+                                    : format === 'DOCX'
+                                      ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                      : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            }`}
+                          >
+                            {format}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="font-mono text-xs text-slate-500">
+                          {ev.sha256 ? (
+                            <div className="flex items-center gap-1.5">
+                              <span>
+                                {ev.sha256.slice(0, 10)}...{ev.sha256.slice(-6)}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopySha(ev.id, ev.sha256!)}
+                                className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                                title="Copy full SHA-256 hash"
+                              >
+                                {copiedShaId === ev.id ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          ) : (
+                            '—'
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-500">
+                          {formatDateTime(ev.capturedAt ?? ev.createdAt)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => handleDownloadEvidence(ev)}
+                            className="h-7 gap-1 px-2 text-xs text-slate-700"
+                            title="Download authenticated evidence"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Download
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
 
         {/* SECTION 4: CHRONOLOGICAL TIMELINE */}
         <Card className="border-slate-200">
@@ -1019,6 +1140,16 @@ export function IncidentDetailView({
         variant="destructive"
         loading={isUnlinkingReport}
         onConfirm={handleUnlinkReport}
+      />
+
+      {/* UPLOAD EVIDENCE DIALOG */}
+      <UploadEvidenceDialog
+        isOpen={uploadEvidenceDialogOpen}
+        onClose={() => setUploadEvidenceDialogOpen(false)}
+        onSuccess={() => {
+          refreshIncident();
+        }}
+        preselectedIncidentId={incident.id}
       />
     </AppShell>
   );
