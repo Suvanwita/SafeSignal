@@ -86,6 +86,7 @@ function SidebarContent({
                           item.href !== '/dashboard' &&
                           item.href !== '/identity' &&
                           item.href !== '/intelligence' &&
+                          item.href !== '/abuse' &&
                           item.href !== '/'
                         ) {
                           event.preventDefault();

@@ -53,6 +53,7 @@ export function AppShell({
             item.href !== '/dashboard' &&
             item.href !== '/identity' &&
             item.href !== '/intelligence' &&
+            item.href !== '/abuse' &&
             item.href !== '/'
           ) {
             notify.info(

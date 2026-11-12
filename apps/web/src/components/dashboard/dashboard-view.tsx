@@ -206,6 +206,10 @@ export function DashboardView({
   }
 
   function handleQuickAction(title: string) {
+    if (title === 'Report abuse') {
+      router.push('/abuse/new');
+      return;
+    }
     if (title === 'Add suspicious profile') {
       router.push('/intelligence');
       return;

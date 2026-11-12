@@ -88,6 +88,26 @@ export class CreateAbuseReportDto {
   incidentId?: string;
 
   @ApiPropertyOptional({
+    example: 'Coordinated Harassment Incident',
+    minLength: 3,
+    maxLength: 200,
+    description:
+      'Optional title to atomically create a new incident and associate this report with it',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  })
+  @IsString()
+  @MinLength(3, { message: 'New incident title must be at least 3 characters' })
+  @MaxLength(200, {
+    message: 'New incident title must not exceed 200 characters',
+  })
+  newIncidentTitle?: string;
+
+  @ApiPropertyOptional({
     format: 'uuid',
     description:
       'Optional suspicious profile UUID owned by the current user',

@@ -304,4 +304,56 @@ describe('Abuse Reporting Integration (/api/v1/abuse/reports)', () => {
       .set('Authorization', `Bearer ${intruder.accessToken}`)
       .expect(403);
   });
+
+  it('lists/creates incidents via /api/v1/incidents and atomically creates a new incident via newIncidentTitle', async () => {
+    const owner = await registerUser('incidents');
+
+    // Create report with inline newIncidentTitle.
+    const reportRes = await request(app.getHttpServer())
+      .post('/api/v1/abuse/reports')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'First threat message',
+        description: 'Direct threat received requiring a new incident record.',
+        category: AbuseCategory.THREATS,
+        platform: Platform.X,
+        incidentDate: '2026-11-11T09:00:00.000Z',
+        severity: Severity.HIGH,
+        newIncidentTitle: 'November Escalation Incident',
+      })
+      .expect(201);
+
+    expect(reportRes.body.data.incidentId).toBeDefined();
+    expect(reportRes.body.data.incident).toEqual({
+      id: reportRes.body.data.incidentId,
+      title: 'November Escalation Incident',
+      status: 'OPEN',
+    });
+
+    // Listing /api/v1/incidents shows the newly created incident with reportCount = 1.
+    const incidentsRes = await request(app.getHttpServer())
+      .get('/api/v1/incidents')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .expect(200);
+
+    expect(incidentsRes.body.data).toHaveLength(1);
+    expect(incidentsRes.body.data[0].title).toBe('November Escalation Incident');
+    expect(incidentsRes.body.data[0].reportCount).toBe(1);
+
+    // Passing both incidentId and newIncidentTitle is rejected.
+    await request(app.getHttpServer())
+      .post('/api/v1/abuse/reports')
+      .set('Authorization', `Bearer ${owner.accessToken}`)
+      .send({
+        title: 'Ambiguous incident choice',
+        description: 'Should reject setting both incidentId and newIncidentTitle.',
+        category: AbuseCategory.HARASSMENT,
+        platform: Platform.X,
+        incidentDate: '2026-11-11T10:00:00.000Z',
+        severity: Severity.MEDIUM,
+        incidentId: reportRes.body.data.incidentId,
+        newIncidentTitle: 'Duplicate Attempt',
+      })
+      .expect(400);
+  });
 });

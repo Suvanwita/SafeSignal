@@ -75,6 +75,13 @@ export class AbuseService {
     userId: string,
     dto: CreateAbuseReportDto,
   ): Promise<AbuseReportResponseDto> {
+    if (dto.incidentId && dto.newIncidentTitle) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Provide either an existing incidentId or newIncidentTitle, not both',
+      });
+    }
+
     const parsedIncidentDate = this.parseAndValidateIncidentDate(
       dto.incidentDate,
     );
@@ -89,10 +96,41 @@ export class AbuseService {
     const now = new Date();
 
     const created = await this.prisma.$transaction(async (tx) => {
+      let targetIncidentId: string | null = dto.incidentId ?? null;
+
+      if (dto.newIncidentTitle) {
+        const createdIncident = await tx.incident.create({
+          data: {
+            userId,
+            title: dto.newIncidentTitle,
+            status: IncidentStatus.OPEN,
+            severity: dto.severity,
+            category: dto.category,
+            occurredAt: parsedIncidentDate,
+          },
+        });
+        targetIncidentId = createdIncident.id;
+
+        await tx.timelineEvent.create({
+          data: {
+            userId,
+            incidentId: createdIncident.id,
+            eventType: 'INCIDENT_CREATED',
+            title: `Incident opened: ${createdIncident.title}`,
+            description: `${createdIncident.category} (${createdIncident.severity})`,
+            metadata: {
+              category: createdIncident.category,
+              severity: createdIncident.severity,
+            } as Prisma.InputJsonValue,
+            occurredAt: now,
+          },
+        });
+      }
+
       const report = await tx.abuseReport.create({
         data: {
           userId,
-          incidentId: dto.incidentId ?? null,
+          incidentId: targetIncidentId,
           suspiciousProfileId: dto.suspiciousProfileId ?? null,
           title: dto.title,
           description: dto.description,
@@ -108,11 +146,11 @@ export class AbuseService {
         include: INCIDENT_SUMMARY_INCLUDE,
       });
 
-      if (dto.incidentId) {
+      if (targetIncidentId) {
         await tx.timelineEvent.create({
           data: {
             userId,
-            incidentId: dto.incidentId,
+            incidentId: targetIncidentId,
             eventType: 'ABUSE_REPORT_CREATED',
             title: `Abuse report filed: ${report.title}`,
             description: `${report.category} (${report.severity}) reported on ${report.platform}.`,
@@ -138,6 +176,13 @@ export class AbuseService {
     reportId: string,
     dto: UpdateAbuseReportDto,
   ): Promise<AbuseReportResponseDto> {
+    if (typeof dto.incidentId === 'string' && dto.newIncidentTitle) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Provide either an existing incidentId or newIncidentTitle, not both',
+      });
+    }
+
     const existing = await this.prisma.abuseReport.findUnique({
       where: { id: reportId },
     });
@@ -155,11 +200,44 @@ export class AbuseService {
       await this.verifyOwnedSuspiciousProfile(userId, dto.suspiciousProfileId);
     }
 
-    const newlyLinkedToIncident =
-      typeof dto.incidentId === 'string' &&
-      dto.incidentId !== existing.incidentId;
+    const now = new Date();
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      let resolvedIncidentId: string | null | undefined = dto.incidentId;
+
+      if (dto.newIncidentTitle) {
+        const createdIncident = await tx.incident.create({
+          data: {
+            userId,
+            title: dto.newIncidentTitle,
+            status: IncidentStatus.OPEN,
+            severity: dto.severity ?? existing.severity,
+            category: dto.category ?? existing.category,
+            occurredAt: parsedIncidentDate ?? existing.incidentDate,
+          },
+        });
+        resolvedIncidentId = createdIncident.id;
+
+        await tx.timelineEvent.create({
+          data: {
+            userId,
+            incidentId: createdIncident.id,
+            eventType: 'INCIDENT_CREATED',
+            title: `Incident opened: ${createdIncident.title}`,
+            description: `${createdIncident.category} (${createdIncident.severity})`,
+            metadata: {
+              category: createdIncident.category,
+              severity: createdIncident.severity,
+            } as Prisma.InputJsonValue,
+            occurredAt: now,
+          },
+        });
+      }
+
+      const newlyLinkedToIncident =
+        typeof resolvedIncidentId === 'string' &&
+        resolvedIncidentId !== existing.incidentId;
+
       const report = await tx.abuseReport.update({
         where: { id: reportId },
         data: {
@@ -173,8 +251,8 @@ export class AbuseService {
             ? { incidentDate: parsedIncidentDate }
             : {}),
           ...(dto.severity !== undefined ? { severity: dto.severity } : {}),
-          ...(dto.incidentId !== undefined
-            ? { incidentId: dto.incidentId }
+          ...(resolvedIncidentId !== undefined
+            ? { incidentId: resolvedIncidentId }
             : {}),
           ...(dto.suspiciousProfileId !== undefined
             ? { suspiciousProfileId: dto.suspiciousProfileId }
@@ -190,11 +268,11 @@ export class AbuseService {
         include: INCIDENT_SUMMARY_INCLUDE,
       });
 
-      if (newlyLinkedToIncident && dto.incidentId) {
+      if (newlyLinkedToIncident && resolvedIncidentId) {
         await tx.timelineEvent.create({
           data: {
             userId,
-            incidentId: dto.incidentId,
+            incidentId: resolvedIncidentId,
             eventType: 'ABUSE_REPORT_LINKED',
             title: `Abuse report linked: ${report.title}`,
             description: `${report.category} (${report.severity}) linked to incident.`,
@@ -204,7 +282,7 @@ export class AbuseService {
               platform: report.platform,
               severity: report.severity,
             } as Prisma.InputJsonValue,
-            occurredAt: new Date(),
+            occurredAt: now,
           },
         });
       }
