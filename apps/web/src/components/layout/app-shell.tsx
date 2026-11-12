@@ -52,6 +52,7 @@ export function AppShell({
           if (
             item.href !== '/dashboard' &&
             item.href !== '/identity' &&
+            item.href !== '/intelligence' &&
             item.href !== '/'
           ) {
             notify.info(

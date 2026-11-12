@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import { useRouter } from 'next/navigation';
 import {
   Activity,
   AlertTriangle,
@@ -162,6 +163,7 @@ export function DashboardView({
   user,
   initialOverview,
 }: DashboardViewProps) {
+  const router = useRouter();
   const [overview, setOverview] = React.useState<DashboardOverview>(
     initialOverview ?? EMPTY_OVERVIEW,
   );
@@ -204,6 +206,10 @@ export function DashboardView({
   }
 
   function handleQuickAction(title: string) {
+    if (title === 'Add suspicious profile') {
+      router.push('/intelligence');
+      return;
+    }
     notify.info(
       title,
       'This module workflow will open directly once feature pages are connected.',

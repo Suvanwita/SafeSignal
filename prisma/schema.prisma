@@ -60,6 +60,14 @@ enum AnalysisType {
   SUMMARY
 }
 
+enum SuspiciousProfileStatus {
+  PENDING_REVIEW
+  UNDER_REVIEW
+  MONITORING
+  ESCALATED
+  DISMISSED
+}
+
 model User {
   id           String   @id @default(uuid()) @db.Uuid
   email        String   @unique
@@ -124,18 +132,21 @@ model OfficialAccount {
 }
 
 model SuspiciousProfile {
-  id          String    @id @default(uuid()) @db.Uuid
-  userId      String    @db.Uuid
-  platform    Platform
-  handle      String
-  displayName String?
-  profileUrl  String?
-  bio         String?
-  firstSeenAt DateTime?
-  lastSeenAt  DateTime?
-  notes       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id              String                  @id @default(uuid()) @db.Uuid
+  userId          String                  @db.Uuid
+  platform        Platform
+  handle          String
+  displayName     String?
+  profileUrl      String?
+  bio             String?
+  profileImageUrl String?
+  reviewStatus    SuspiciousProfileStatus @default(PENDING_REVIEW)
+  reviewedAt      DateTime?
+  firstSeenAt     DateTime?
+  lastSeenAt      DateTime?
+  notes           String?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   incidents    Incident[]
@@ -144,6 +155,7 @@ model SuspiciousProfile {
 
   @@index([userId])
   @@index([userId, platform])
+  @@index([userId, reviewStatus])
   @@index([platform, handle])
   @@map("suspicious_profiles")
 }
@@ -261,7 +273,7 @@ model TimelineEvent {
 model Analysis {
   id                  String       @id @default(uuid()) @db.Uuid
   userId              String       @db.Uuid
-  incidentId          String       @db.Uuid
+  incidentId          String?      @db.Uuid
   officialAccountId   String?      @db.Uuid
   suspiciousProfileId String?      @db.Uuid
   evidenceId          String?      @db.Uuid
@@ -273,7 +285,7 @@ model Analysis {
   updatedAt           DateTime     @updatedAt
 
   user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  incident          Incident           @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  incident          Incident?          @relation(fields: [incidentId], references: [id], onDelete: Cascade)
   officialAccount   OfficialAccount?   @relation(fields: [officialAccountId], references: [id], onDelete: SetNull)
   suspiciousProfile SuspiciousProfile? @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
   evidence          Evidence?          @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
