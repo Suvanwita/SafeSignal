@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   Activity,
@@ -212,6 +213,18 @@ export function DashboardView({
     }
     if (title === 'Add suspicious profile') {
       router.push('/intelligence');
+      return;
+    }
+    if (
+      title === 'Inspect incidents' ||
+      title === 'Create incident' ||
+      title === 'Review timeline'
+    ) {
+      router.push('/incidents');
+      return;
+    }
+    if (title === 'Add official identity' || title === 'Add official account') {
+      router.push('/identity');
       return;
     }
     notify.info(
@@ -426,9 +439,12 @@ export function DashboardView({
                   {recentIncidents.map((incident) => (
                     <TableRow key={incident.id}>
                       <TableCell>
-                        <div className="font-medium text-slate-900">
+                        <Link
+                          href={`/incidents/${incident.id}`}
+                          className="font-medium text-slate-900 hover:text-sky-700 hover:underline transition-colors"
+                        >
                           {incident.title}
-                        </div>
+                        </Link>
                         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
                           <span>{formatCategory(incident.category)}</span>
                           {incident.platform && (

@@ -84,6 +84,7 @@ function SidebarContent({
                         }
                         if (
                           item.href !== '/dashboard' &&
+                          item.href !== '/incidents' &&
                           item.href !== '/identity' &&
                           item.href !== '/intelligence' &&
                           item.href !== '/abuse' &&

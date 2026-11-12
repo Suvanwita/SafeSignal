@@ -143,6 +143,7 @@ export interface SuspiciousProfile {
   createdAt: string;
   updatedAt: string;
   latestAnalysis: SimilarityAnalysis | null;
+  incidents?: { id: string; title: string; status: string }[];
 }
 
 export interface SuspiciousProfileDetail extends SuspiciousProfile {
@@ -157,6 +158,8 @@ export interface CreateSuspiciousProfileInput {
   bio?: string;
   profileImageUrl?: string;
   notes?: string;
+  incidentId?: string;
+  newIncidentTitle?: string;
 }
 
 export interface UpdateSuspiciousProfileStatusInput {

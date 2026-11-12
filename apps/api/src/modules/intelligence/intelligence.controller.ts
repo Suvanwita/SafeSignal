@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common';
 import { CreateSuspiciousProfileDto } from './dto/create-suspicious-profile.dto';
+import { LinkIncidentDto } from './dto/link-incident.dto';
 import {
   DeleteSuspiciousProfileResponseDto,
   SuspiciousProfileDetailResponseDto,
@@ -106,6 +107,40 @@ export class IntelligenceController {
     @Body() dto: UpdateSuspiciousProfileStatusDto,
   ): Promise<SuspiciousProfileResponseDto> {
     return this.intelligenceService.updateReviewStatusForUser(userId, id, dto);
+  }
+
+  @Post(':id/incident')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Associate this suspicious profile with a safety incident' })
+  @ApiOkResponse({ type: SuspiciousProfileResponseDto })
+  @ApiNotFoundResponse({ description: 'Suspicious profile or incident not found' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  linkIncident(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: LinkIncidentDto,
+  ): Promise<SuspiciousProfileResponseDto> {
+    return this.intelligenceService.linkIncidentForUser(userId, id, dto);
+  }
+
+  @Delete(':id/incident/:incidentId')
+  @ApiOperation({
+    summary:
+      'Unlink this suspicious profile from an incident without deleting the profile',
+  })
+  @ApiOkResponse({ type: SuspiciousProfileResponseDto })
+  @ApiNotFoundResponse({ description: 'Suspicious profile or incident not found' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  unlinkIncident(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('incidentId', ParseUUIDPipe) incidentId: string,
+  ): Promise<SuspiciousProfileResponseDto> {
+    return this.intelligenceService.unlinkIncidentForUser(
+      userId,
+      id,
+      incidentId,
+    );
   }
 
   @Delete(':id')

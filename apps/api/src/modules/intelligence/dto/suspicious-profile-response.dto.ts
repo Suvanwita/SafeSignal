@@ -109,6 +109,17 @@ export class SimilarityAnalysisDto {
   createdAt!: Date;
 }
 
+export class ProfileIncidentLinkDto {
+  @ApiProperty({ format: 'uuid' })
+  id!: string;
+
+  @ApiProperty()
+  title!: string;
+
+  @ApiProperty()
+  status!: string;
+}
+
 export class SuspiciousProfileResponseDto {
   @ApiProperty({ format: 'uuid' })
   id!: string;
@@ -151,6 +162,9 @@ export class SuspiciousProfileResponseDto {
 
   @ApiProperty({ type: SimilarityAnalysisDto, nullable: true })
   latestAnalysis!: SimilarityAnalysisDto | null;
+
+  @ApiProperty({ type: [ProfileIncidentLinkDto] })
+  incidents!: ProfileIncidentLinkDto[];
 }
 
 export class SuspiciousProfileDetailResponseDto extends SuspiciousProfileResponseDto {

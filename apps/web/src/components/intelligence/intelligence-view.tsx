@@ -41,12 +41,14 @@ export interface IntelligenceViewProps {
   user: AuthUser;
   initialProfiles: SuspiciousProfile[] | null;
   officialAccountCount: number;
+  incidents?: { id: string; title: string; status: string }[];
 }
 
 export function IntelligenceView({
   user,
   initialProfiles,
   officialAccountCount,
+  incidents = [],
 }: IntelligenceViewProps) {
   const [profiles, setProfiles] = React.useState<SuspiciousProfile[]>(
     () => initialProfiles ?? [],
@@ -475,6 +477,7 @@ export function IntelligenceView({
         open={reportOpen}
         onOpenChange={setReportOpen}
         onReported={handleReported}
+        incidents={incidents}
       />
 
       <ConfirmDialog

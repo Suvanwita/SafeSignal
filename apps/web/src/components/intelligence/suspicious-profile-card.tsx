@@ -1,7 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import {
   ExternalLink,
+  FolderLock,
   RefreshCw,
   ScanSearch,
   Trash2,
@@ -128,6 +130,21 @@ export function SuspiciousProfileCard({
                   +{analysis.indicators.length - 2} more
                 </span>
               )}
+            </div>
+          )}
+
+          {profile.incidents && profile.incidents.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+              {profile.incidents.map((inc) => (
+                <Link
+                  key={inc.id}
+                  href={`/incidents/${inc.id}`}
+                  className="inline-flex items-center gap-1 rounded bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700 hover:bg-blue-100"
+                >
+                  <FolderLock className="h-3 w-3" />
+                  <span className="truncate max-w-[200px]">Incident: {inc.title}</span>
+                </Link>
+              ))}
             </div>
           )}
         </CardContent>

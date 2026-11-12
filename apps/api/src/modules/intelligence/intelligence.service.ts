@@ -1,17 +1,22 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import {
+  AbuseCategory,
   Analysis,
   AnalysisType,
+  IncidentStatus,
   Platform,
   Prisma,
+  Severity,
   SuspiciousProfile,
   SuspiciousProfileStatus,
 } from '@prisma/client';
 import { assertOwnedResource } from '../../common';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { CreateSuspiciousProfileDto } from './dto/create-suspicious-profile.dto';
+import type { LinkIncidentDto } from './dto/link-incident.dto';
 import type {
   DeleteSuspiciousProfileResponseDto,
+  ProfileIncidentLinkDto,
   SimilarityAnalysisDto,
   SimilarityAnalysisResultPayload,
   SuspiciousProfileDetailResponseDto,
@@ -23,9 +28,44 @@ import {
   analyzeSuspiciousProfileAgainstOfficialAccounts,
 } from './similarity-analyzer';
 
-type ProfileWithAnalyses = SuspiciousProfile & {
-  analyses: Analysis[];
+type ProfileIncidentItem = {
+  id: string;
+  title: string;
+  status: IncidentStatus;
 };
+
+type ProfileWithRelations = SuspiciousProfile & {
+  analyses: Analysis[];
+  incidentLinks?: {
+    incident: ProfileIncidentItem;
+  }[];
+  incidents?: ProfileIncidentItem[];
+};
+
+const PROFILE_RELATIONS_INCLUDE = {
+  analyses: {
+    where: { type: AnalysisType.SIMILARITY_CHECK },
+    orderBy: { createdAt: 'desc' as const },
+  },
+  incidentLinks: {
+    include: {
+      incident: {
+        select: {
+          id: true,
+          title: true,
+          status: true,
+        },
+      },
+    },
+  },
+  incidents: {
+    select: {
+      id: true,
+      title: true,
+      status: true,
+    },
+  },
+} satisfies Prisma.SuspiciousProfileInclude;
 
 @Injectable()
 export class IntelligenceService {
@@ -37,13 +77,7 @@ export class IntelligenceService {
     const profiles = await this.prisma.suspiciousProfile.findMany({
       where: { userId },
       orderBy: { createdAt: 'desc' },
-      include: {
-        analyses: {
-          where: { type: AnalysisType.SIMILARITY_CHECK },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
+      include: PROFILE_RELATIONS_INCLUDE,
     });
 
     return profiles.map((profile) => this.toResponseDto(profile));
@@ -55,12 +89,7 @@ export class IntelligenceService {
   ): Promise<SuspiciousProfileDetailResponseDto> {
     const profile = await this.prisma.suspiciousProfile.findUnique({
       where: { id: profileId },
-      include: {
-        analyses: {
-          where: { type: AnalysisType.SIMILARITY_CHECK },
-          orderBy: { createdAt: 'desc' },
-        },
-      },
+      include: PROFILE_RELATIONS_INCLUDE,
     });
 
     assertOwnedResource(profile, userId, 'Suspicious profile');
@@ -75,6 +104,21 @@ export class IntelligenceService {
     userId: string,
     dto: CreateSuspiciousProfileDto,
   ): Promise<SuspiciousProfileResponseDto> {
+    if (dto.incidentId && dto.newIncidentTitle) {
+      throw new BadRequestException({
+        code: 'VALIDATION_ERROR',
+        message: 'Provide either an existing incidentId or newIncidentTitle, not both',
+      });
+    }
+
+    if (dto.incidentId) {
+      const targetIncident = await this.prisma.incident.findUnique({
+        where: { id: dto.incidentId },
+        select: { id: true, userId: true },
+      });
+      assertOwnedResource(targetIncident, userId, 'Incident');
+    }
+
     const normalizedHandle = this.normalizeUsername(dto.platform, dto.username);
 
     const officialAccounts = await this.prisma.officialAccount.findMany({
@@ -95,7 +139,38 @@ export class IntelligenceService {
 
     const now = new Date();
 
-    const { profile, analysis } = await this.prisma.$transaction(async (tx) => {
+    const created = await this.prisma.$transaction(async (tx) => {
+      let resolvedIncidentId: string | null = dto.incidentId ?? null;
+
+      if (dto.newIncidentTitle) {
+        const createdIncident = await tx.incident.create({
+          data: {
+            userId,
+            title: dto.newIncidentTitle,
+            status: IncidentStatus.OPEN,
+            severity: Severity.MEDIUM,
+            category: AbuseCategory.IMPERSONATION,
+            occurredAt: now,
+          },
+        });
+        resolvedIncidentId = createdIncident.id;
+
+        await tx.timelineEvent.create({
+          data: {
+            userId,
+            incidentId: createdIncident.id,
+            eventType: 'INCIDENT_CREATED',
+            title: `Incident opened: ${createdIncident.title}`,
+            description: `Impersonation investigation initiated.`,
+            metadata: {
+              category: createdIncident.category,
+              severity: createdIncident.severity,
+            } as Prisma.InputJsonValue,
+            occurredAt: now,
+          },
+        });
+      }
+
       const createdProfile = await tx.suspiciousProfile.create({
         data: {
           userId,
@@ -115,7 +190,7 @@ export class IntelligenceService {
       const createdAnalysis = await tx.analysis.create({
         data: {
           userId,
-          incidentId: null,
+          incidentId: resolvedIncidentId,
           officialAccountId: analysisResult.matchedOfficialAccountId,
           suspiciousProfileId: createdProfile.id,
           type: AnalysisType.SIMILARITY_CHECK,
@@ -125,13 +200,165 @@ export class IntelligenceService {
         },
       });
 
-      return { profile: createdProfile, analysis: createdAnalysis };
+      if (resolvedIncidentId) {
+        await tx.incidentSuspiciousProfile.create({
+          data: {
+            userId,
+            incidentId: resolvedIncidentId,
+            suspiciousProfileId: createdProfile.id,
+            notes: dto.notes ?? null,
+          },
+        });
+
+        // Set as primary incident suspiciousProfileId if null
+        await tx.incident.update({
+          where: { id: resolvedIncidentId },
+          data: {
+            suspiciousProfileId: createdProfile.id,
+          },
+        });
+
+        await tx.timelineEvent.create({
+          data: {
+            userId,
+            incidentId: resolvedIncidentId,
+            eventType: 'PROFILE_LINKED',
+            title: `Suspicious profile linked: @${createdProfile.handle}`,
+            description: `${createdProfile.platform} @${createdProfile.handle} linked to incident.`,
+            metadata: {
+              suspiciousProfileId: createdProfile.id,
+              platform: createdProfile.platform,
+              handle: createdProfile.handle,
+              similarityScore: analysisResult.overallScore,
+            } as Prisma.InputJsonValue,
+            occurredAt: now,
+          },
+        });
+      }
+
+      return tx.suspiciousProfile.findUniqueOrThrow({
+        where: { id: createdProfile.id },
+        include: PROFILE_RELATIONS_INCLUDE,
+      });
     });
 
-    return this.toResponseDto({
-      ...profile,
-      analyses: [analysis],
+    return this.toResponseDto(created);
+  }
+
+  async linkIncidentForUser(
+    userId: string,
+    profileId: string,
+    dto: LinkIncidentDto,
+  ): Promise<SuspiciousProfileResponseDto> {
+    const profile = await this.prisma.suspiciousProfile.findUnique({
+      where: { id: profileId },
     });
+    assertOwnedResource(profile, userId, 'Suspicious profile');
+
+    const incident = await this.prisma.incident.findUnique({
+      where: { id: dto.incidentId },
+    });
+    assertOwnedResource(incident, userId, 'Incident');
+
+    const now = new Date();
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.incidentSuspiciousProfile.upsert({
+        where: {
+          incidentId_suspiciousProfileId: {
+            incidentId: dto.incidentId,
+            suspiciousProfileId: profileId,
+          },
+        },
+        create: {
+          userId,
+          incidentId: dto.incidentId,
+          suspiciousProfileId: profileId,
+          notes: dto.notes ?? null,
+        },
+        update: {
+          notes: dto.notes ?? undefined,
+        },
+      });
+
+      await tx.timelineEvent.create({
+        data: {
+          userId,
+          incidentId: dto.incidentId,
+          eventType: 'PROFILE_LINKED',
+          title: `Suspicious profile linked: @${profile.handle}`,
+          description: `${profile.platform} @${profile.handle} linked to incident.`,
+          metadata: {
+            suspiciousProfileId: profile.id,
+            platform: profile.platform,
+            handle: profile.handle,
+          } as Prisma.InputJsonValue,
+          occurredAt: now,
+        },
+      });
+
+      return tx.suspiciousProfile.findUniqueOrThrow({
+        where: { id: profileId },
+        include: PROFILE_RELATIONS_INCLUDE,
+      });
+    });
+
+    return this.toResponseDto(updated);
+  }
+
+  async unlinkIncidentForUser(
+    userId: string,
+    profileId: string,
+    incidentId: string,
+  ): Promise<SuspiciousProfileResponseDto> {
+    const profile = await this.prisma.suspiciousProfile.findUnique({
+      where: { id: profileId },
+    });
+    assertOwnedResource(profile, userId, 'Suspicious profile');
+
+    const incident = await this.prisma.incident.findUnique({
+      where: { id: incidentId },
+    });
+    assertOwnedResource(incident, userId, 'Incident');
+
+    const now = new Date();
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.incidentSuspiciousProfile.deleteMany({
+        where: {
+          incidentId,
+          suspiciousProfileId: profileId,
+        },
+      });
+
+      if (incident.suspiciousProfileId === profileId) {
+        await tx.incident.update({
+          where: { id: incidentId },
+          data: { suspiciousProfileId: null },
+        });
+      }
+
+      await tx.timelineEvent.create({
+        data: {
+          userId,
+          incidentId,
+          eventType: 'PROFILE_UNLINKED',
+          title: `Suspicious profile unlinked: @${profile.handle}`,
+          description: `@${profile.handle} unlinked from incident.`,
+          metadata: {
+            suspiciousProfileId: profile.id,
+          } as Prisma.InputJsonValue,
+          occurredAt: now,
+        },
+      });
+
+      return tx.suspiciousProfile.findUniqueOrThrow({
+        where: { id: profileId },
+        include: PROFILE_RELATIONS_INCLUDE,
+      });
+    });
+
+    return this.toResponseDto(updated);
   }
 
   async reanalyzeForUser(
@@ -172,10 +399,12 @@ export class IntelligenceService {
       },
     });
 
-    return this.toResponseDto({
-      ...existing,
-      analyses: [createdAnalysis],
+    const refreshed = await this.prisma.suspiciousProfile.findUniqueOrThrow({
+      where: { id: profileId },
+      include: PROFILE_RELATIONS_INCLUDE,
     });
+
+    return this.toResponseDto(refreshed);
   }
 
   async updateReviewStatusForUser(
@@ -195,13 +424,7 @@ export class IntelligenceService {
         reviewedAt: new Date(),
         ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
       },
-      include: {
-        analyses: {
-          where: { type: AnalysisType.SIMILARITY_CHECK },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
+      include: PROFILE_RELATIONS_INCLUDE,
     });
 
     return this.toResponseDto(updated);
@@ -216,17 +439,8 @@ export class IntelligenceService {
     });
     assertOwnedResource(existing, userId, 'Suspicious profile');
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.analysis.deleteMany({
-        where: {
-          userId,
-          suspiciousProfileId: profileId,
-          incidentId: null,
-        },
-      });
-      await tx.suspiciousProfile.delete({
-        where: { id: profileId },
-      });
+    await this.prisma.suspiciousProfile.delete({
+      where: { id: profileId },
     });
 
     return {
@@ -254,7 +468,8 @@ export class IntelligenceService {
 
   private toAnalysisDto(analysis: Analysis): SimilarityAnalysisDto {
     const payload =
-      analysis.result as unknown as Partial<SimilarityAnalysisResultPayload>;
+      (analysis.result as unknown as Partial<SimilarityAnalysisResultPayload>) ??
+      {};
 
     return {
       id: analysis.id,
@@ -280,9 +495,32 @@ export class IntelligenceService {
   }
 
   private toResponseDto(
-    profile: ProfileWithAnalyses,
+    profile: ProfileWithRelations,
   ): SuspiciousProfileResponseDto {
-    const latest = profile.analyses[0];
+    const latest = profile.analyses?.[0];
+
+    const incidentMap = new Map<string, ProfileIncidentLinkDto>();
+    if (profile.incidents) {
+      for (const inc of profile.incidents) {
+        incidentMap.set(inc.id, {
+          id: inc.id,
+          title: inc.title,
+          status: inc.status,
+        });
+      }
+    }
+    if (profile.incidentLinks) {
+      for (const link of profile.incidentLinks) {
+        if (link.incident) {
+          incidentMap.set(link.incident.id, {
+            id: link.incident.id,
+            title: link.incident.title,
+            status: link.incident.status,
+          });
+        }
+      }
+    }
+
     return {
       id: profile.id,
       userId: profile.userId,
@@ -298,6 +536,7 @@ export class IntelligenceService {
       createdAt: profile.createdAt,
       updatedAt: profile.updatedAt,
       latestAnalysis: latest ? this.toAnalysisDto(latest) : null,
+      incidents: Array.from(incidentMap.values()),
     };
   }
 }

@@ -6,8 +6,10 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   IsUrl,
   MaxLength,
+  MinLength,
 } from 'class-validator';
 
 export class CreateSuspiciousProfileDto {
@@ -112,4 +114,34 @@ export class CreateSuspiciousProfileDto {
   @IsString()
   @MaxLength(1000, { message: 'Notes must not exceed 1000 characters' })
   notes?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Optional incident UUID to associate this suspicious profile with',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  })
+  @IsUUID('4', { message: 'Incident ID must be a valid UUID' })
+  incidentId?: string;
+
+  @ApiPropertyOptional({
+    example: 'Coordinated impersonator campaign targeting brand',
+    minLength: 3,
+    maxLength: 200,
+    description: 'Optional new incident title to create and link atomically',
+  })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  })
+  @IsString()
+  @MinLength(3, { message: 'New incident title must be at least 3 characters' })
+  @MaxLength(200, { message: 'New incident title must not exceed 200 characters' })
+  newIncidentTitle?: string;
 }

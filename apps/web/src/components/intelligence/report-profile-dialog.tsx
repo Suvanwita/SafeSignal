@@ -19,10 +19,17 @@ import { PLATFORM_OPTIONS, type Platform } from '@/lib/identity/types';
 import { reportSuspiciousProfile } from '@/lib/intelligence/client-intelligence';
 import type { SuspiciousProfile } from '@/lib/intelligence/types';
 
+export interface IncidentOptionItem {
+  id: string;
+  title: string;
+  status: string;
+}
+
 export interface ReportProfileDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onReported: (profile: SuspiciousProfile) => void;
+  incidents?: IncidentOptionItem[];
 }
 
 interface FormErrors {
@@ -33,6 +40,8 @@ interface FormErrors {
   bio?: string;
   profileImageUrl?: string;
   notes?: string;
+  incidentId?: string;
+  newIncidentTitle?: string;
   form?: string;
 }
 
@@ -49,6 +58,7 @@ export function ReportProfileDialog({
   open,
   onOpenChange,
   onReported,
+  incidents = [],
 }: ReportProfileDialogProps) {
   const [platform, setPlatform] = React.useState<Platform>('X');
   const [profileUrl, setProfileUrl] = React.useState('');
@@ -57,6 +67,9 @@ export function ReportProfileDialog({
   const [bio, setBio] = React.useState('');
   const [profileImageUrl, setProfileImageUrl] = React.useState('');
   const [notes, setNotes] = React.useState('');
+  const [incidentMode, setIncidentMode] = React.useState<'none' | 'existing' | 'new'>('none');
+  const [selectedIncidentId, setSelectedIncidentId] = React.useState('');
+  const [newIncidentTitle, setNewIncidentTitle] = React.useState('');
   const [errors, setErrors] = React.useState<FormErrors>({});
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -69,8 +82,11 @@ export function ReportProfileDialog({
     setBio('');
     setProfileImageUrl('');
     setNotes('');
+    setIncidentMode('none');
+    setSelectedIncidentId(incidents[0]?.id ?? '');
+    setNewIncidentTitle('');
     setErrors({});
-  }, [open]);
+  }, [open, incidents]);
 
   const selectedPlatform = React.useMemo(
     () =>
@@ -127,6 +143,21 @@ export function ReportProfileDialog({
       nextErrors.notes = 'Notes must not exceed 1000 characters';
     }
 
+    if (incidentMode === 'existing' && !selectedIncidentId) {
+      nextErrors.incidentId = 'Please select an existing safety incident';
+    }
+
+    if (incidentMode === 'new') {
+      const trimmedTitle = newIncidentTitle.trim();
+      if (!trimmedTitle) {
+        nextErrors.newIncidentTitle = 'Incident title is required';
+      } else if (trimmedTitle.length < 3) {
+        nextErrors.newIncidentTitle = 'Incident title must be at least 3 characters';
+      } else if (trimmedTitle.length > 200) {
+        nextErrors.newIncidentTitle = 'Incident title must not exceed 200 characters';
+      }
+    }
+
     return nextErrors;
   }
 
@@ -152,6 +183,12 @@ export function ReportProfileDialog({
           ? { profileImageUrl: profileImageUrl.trim() }
           : {}),
         ...(notes.trim() ? { notes: notes.trim() } : {}),
+        ...(incidentMode === 'existing' && selectedIncidentId
+          ? { incidentId: selectedIncidentId }
+          : {}),
+        ...(incidentMode === 'new' && newIncidentTitle.trim()
+          ? { newIncidentTitle: newIncidentTitle.trim() }
+          : {}),
       });
       onReported(created);
       onOpenChange(false);
@@ -344,6 +381,118 @@ export function ReportProfileDialog({
               maxLength={1000}
             />
           </FormField>
+
+          {/* Incident Association */}
+          <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4 space-y-3">
+            <div className="text-sm font-semibold text-slate-900">
+              Incident Association (Optional)
+            </div>
+            <p className="text-xs text-slate-500">
+              Optionally link this suspicious profile to a safety incident to coordinate evidence and timelines.
+            </p>
+
+            <div className="grid grid-cols-3 gap-2">
+              <label
+                className={`flex cursor-pointer items-center justify-center rounded-md border p-2 text-xs font-medium text-center transition-colors ${
+                  incidentMode === 'none'
+                    ? 'border-slate-900 bg-white text-slate-900 shadow-sm'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-white'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="incidentMode"
+                  value="none"
+                  checked={incidentMode === 'none'}
+                  onChange={() => setIncidentMode('none')}
+                  className="sr-only"
+                />
+                Standalone
+              </label>
+
+              <label
+                className={`flex cursor-pointer items-center justify-center rounded-md border p-2 text-xs font-medium text-center transition-colors ${
+                  incidentMode === 'existing'
+                    ? 'border-slate-900 bg-white text-slate-900 shadow-sm'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-white'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="incidentMode"
+                  value="existing"
+                  checked={incidentMode === 'existing'}
+                  onChange={() => setIncidentMode('existing')}
+                  className="sr-only"
+                />
+                Existing Incident
+              </label>
+
+              <label
+                className={`flex cursor-pointer items-center justify-center rounded-md border p-2 text-xs font-medium text-center transition-colors ${
+                  incidentMode === 'new'
+                    ? 'border-slate-900 bg-white text-slate-900 shadow-sm'
+                    : 'border-slate-200 bg-slate-50 text-slate-600 hover:bg-white'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="incidentMode"
+                  value="new"
+                  checked={incidentMode === 'new'}
+                  onChange={() => setIncidentMode('new')}
+                  className="sr-only"
+                />
+                New Incident
+              </label>
+            </div>
+
+            {incidentMode === 'existing' && (
+              <FormField
+                id="incident-select"
+                label="Select Existing Incident"
+                error={errors.incidentId}
+              >
+                {incidents.length === 0 ? (
+                  <p className="text-xs text-amber-600">
+                    No active incidents found. Please choose "New Incident" to create one.
+                  </p>
+                ) : (
+                  <select
+                    id="incident-select"
+                    value={selectedIncidentId}
+                    onChange={(e) => setSelectedIncidentId(e.target.value)}
+                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 focus:border-slate-900 focus:outline-none"
+                    disabled={submitting}
+                  >
+                    <option value="">— Select incident —</option>
+                    {incidents.map((inc) => (
+                      <option key={inc.id} value={inc.id}>
+                        {inc.title} ({inc.status})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </FormField>
+            )}
+
+            {incidentMode === 'new' && (
+              <FormField
+                id="new-incident-title"
+                label="New Incident Title"
+                error={errors.newIncidentTitle}
+              >
+                <Input
+                  id="new-incident-title"
+                  value={newIncidentTitle}
+                  onChange={(e) => setNewIncidentTitle(e.target.value)}
+                  placeholder="e.g. Coordinated Impersonator Campaign"
+                  disabled={submitting}
+                  maxLength={200}
+                />
+              </FormField>
+            )}
+          </div>
 
           <DialogFooter>
             <Button
