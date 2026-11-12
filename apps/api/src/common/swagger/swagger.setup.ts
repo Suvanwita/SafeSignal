@@ -20,6 +20,7 @@ export function setupSwagger(app: INestApplication): void {
       'bearer',
     )
     .addTag('Health', 'Service and database health checks')
+    .addTag('Dashboard', 'User security posture, metrics, and recent activity')
     .addTag('Auth', 'Authentication and session lifecycle')
     .addTag('Users', 'User profile and account management')
     .addTag('Identity', 'Official accounts and protected identities')

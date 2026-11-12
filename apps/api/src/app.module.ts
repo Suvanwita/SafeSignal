@@ -19,6 +19,7 @@ import {
 } from './config';
 import { AbuseModule } from './modules/abuse/abuse.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { EvidenceModule } from './modules/evidence/evidence.module';
 import { HealthModule } from './modules/health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
@@ -51,6 +52,7 @@ import { PrismaModule } from './prisma/prisma.module';
       },
     ]),
     HealthModule,
+    DashboardModule,
     AuthModule,
     UsersModule,
     IdentityModule,
