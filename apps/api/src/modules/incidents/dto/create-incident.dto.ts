@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  IsUUID,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -51,4 +52,14 @@ export class CreateIncidentDto {
     { message: 'Occurred date must be a valid ISO 8601 date string' },
   )
   occurredAt?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID('4', { message: 'Official account ID must be a valid UUID' })
+  officialAccountId?: string;
+
+  @ApiPropertyOptional({ format: 'uuid' })
+  @IsOptional()
+  @IsUUID('4', { message: 'Suspicious profile ID must be a valid UUID' })
+  suspiciousProfileId?: string;
 }

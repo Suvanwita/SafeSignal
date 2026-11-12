@@ -82,10 +82,11 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  officialAccounts   OfficialAccount[]
-  suspiciousProfiles SuspiciousProfile[]
-  incidents          Incident[]
-  abuseReports       AbuseReport[]
+  officialAccounts           OfficialAccount[]
+  suspiciousProfiles         SuspiciousProfile[]
+  incidents                  Incident[]
+  incidentSuspiciousProfiles IncidentSuspiciousProfile[]
+  abuseReports               AbuseReport[]
   evidence           Evidence[]
   timelineEvents     TimelineEvent[]
   analyses           Analysis[]
@@ -153,8 +154,9 @@ model SuspiciousProfile {
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
   incidents    Incident[]
+  incidentLinks IncidentSuspiciousProfile[]
   abuseReports AbuseReport[]
   analyses     Analysis[]
 
@@ -180,13 +182,14 @@ model Incident {
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
 
-  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  officialAccount   OfficialAccount?   @relation(fields: [officialAccountId], references: [id], onDelete: SetNull)
-  suspiciousProfile SuspiciousProfile? @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
-  abuseReports      AbuseReport[]
-  evidence          Evidence[]
-  timelineEvents    TimelineEvent[]
-  analyses          Analysis[]
+  user               User                        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  officialAccount    OfficialAccount?            @relation(fields: [officialAccountId], references: [id], onDelete: SetNull)
+  suspiciousProfile  SuspiciousProfile?          @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
+  suspiciousProfiles IncidentSuspiciousProfile[]
+  abuseReports       AbuseReport[]
+  evidence           Evidence[]
+  timelineEvents     TimelineEvent[]
+  analyses           Analysis[]
 
   @@index([userId])
   @@index([userId, status])
@@ -196,6 +199,25 @@ model Incident {
   @@index([suspiciousProfileId])
   @@index([createdAt])
   @@map("incidents")
+}
+
+model IncidentSuspiciousProfile {
+  id                  String   @id @default(uuid()) @db.Uuid
+  userId              String   @db.Uuid
+  incidentId          String   @db.Uuid
+  suspiciousProfileId String   @db.Uuid
+  notes               String?
+  createdAt           DateTime @default(now())
+
+  user              User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incident          Incident          @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  suspiciousProfile SuspiciousProfile @relation(fields: [suspiciousProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([incidentId, suspiciousProfileId])
+  @@index([userId])
+  @@index([incidentId])
+  @@index([suspiciousProfileId])
+  @@map("incident_suspicious_profiles")
 }
 
 model AbuseReport {
