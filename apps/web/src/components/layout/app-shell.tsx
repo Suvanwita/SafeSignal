@@ -1,7 +1,9 @@
 'use client';
 
 import * as React from 'react';
+import { LogoutButton } from '@/components/auth/logout-button';
 import { notify } from '@/components/ui/toaster';
+import type { AuthUser } from '@/lib/auth/types';
 import { SidebarNav } from './sidebar-nav';
 import { TopNav } from './top-nav';
 
@@ -9,6 +11,7 @@ export interface AppShellProps {
   title: string;
   subtitle?: string;
   alertCount?: number;
+  user?: AuthUser;
   topBarActions?: React.ReactNode;
   children: React.ReactNode;
 }
@@ -17,10 +20,28 @@ export function AppShell({
   title,
   subtitle,
   alertCount = 0,
+  user,
   topBarActions,
   children,
 }: AppShellProps) {
   const [mobileOpen, setMobileOpen] = React.useState(false);
+
+  const combinedActions = (
+    <div className="flex items-center gap-2.5">
+      {user && (
+        <div className="hidden items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs md:flex">
+          <span className="font-medium text-slate-800">
+            {user.displayName ?? user.email}
+          </span>
+          {user.displayName && (
+            <span className="text-slate-400">({user.email})</span>
+          )}
+        </div>
+      )}
+      {topBarActions}
+      {user && <LogoutButton />}
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
@@ -28,7 +49,7 @@ export function AppShell({
         mobileOpen={mobileOpen}
         onMobileOpenChange={setMobileOpen}
         onNavigate={(item) => {
-          if (item.href !== '/') {
+          if (item.href !== '/dashboard' && item.href !== '/') {
             notify.info(
               `${item.label} module`,
               'Module route scaffolding will be connected in upcoming milestones.',
@@ -51,7 +72,7 @@ export function AppShell({
                 : 'No active safety alerts.',
             )
           }
-          actions={topBarActions}
+          actions={combinedActions}
         />
 
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">

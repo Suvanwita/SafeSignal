@@ -31,7 +31,7 @@ export const SIDEBAR_NAVIGATION: NavSection[] = [
   {
     title: 'Command Center',
     items: [
-      { id: 'overview', label: 'Overview', href: '/', icon: 'overview' },
+      { id: 'overview', label: 'Overview', href: '/dashboard', icon: 'overview' },
       {
         id: 'incidents',
         label: 'Incidents',
