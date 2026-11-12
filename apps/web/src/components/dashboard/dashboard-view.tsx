@@ -259,7 +259,7 @@ export function DashboardView({
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <ShieldCheck className="h-4 w-4 text-emerald-600" />
             <span>
-              {summary.officialAccounts} verified official account
+              {summary.officialAccounts} user-declared official account
               {summary.officialAccounts === 1 ? '' : 's'}
             </span>
           </div>

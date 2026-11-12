@@ -82,7 +82,11 @@ function SidebarContent({
                         if (onNavigate) {
                           onNavigate(item);
                         }
-                        if (item.href !== '/dashboard' && item.href !== '/') {
+                        if (
+                          item.href !== '/dashboard' &&
+                          item.href !== '/identity' &&
+                          item.href !== '/'
+                        ) {
                           event.preventDefault();
                         }
                       }}

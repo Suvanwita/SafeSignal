@@ -55,7 +55,7 @@ export const SIDEBAR_NAVIGATION: NavSection[] = [
         label: 'Identity',
         href: '/identity',
         icon: 'identity',
-        badge: { text: 'Verified', tone: 'verified' },
+        badge: { text: 'Declared', tone: 'neutral' },
       },
       { id: 'abuse', label: 'Abuse Reports', href: '/abuse', icon: 'abuse' },
       {

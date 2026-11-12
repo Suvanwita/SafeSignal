@@ -108,6 +108,7 @@ model OfficialAccount {
   displayName String?
   profileUrl  String?
   verified    Boolean  @default(false)
+  isPrimary   Boolean  @default(false)
   notes       String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

@@ -49,7 +49,11 @@ export function AppShell({
         mobileOpen={mobileOpen}
         onMobileOpenChange={setMobileOpen}
         onNavigate={(item) => {
-          if (item.href !== '/dashboard' && item.href !== '/') {
+          if (
+            item.href !== '/dashboard' &&
+            item.href !== '/identity' &&
+            item.href !== '/'
+          ) {
             notify.info(
               `${item.label} module`,
               'Module route scaffolding will be connected in upcoming milestones.',
