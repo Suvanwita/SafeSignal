@@ -6,3 +6,262 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum Platform {
+  X
+  INSTAGRAM
+  FACEBOOK
+  TIKTOK
+  YOUTUBE
+  LINKEDIN
+  TELEGRAM
+  WHATSAPP
+  DISCORD
+  REDDIT
+  EMAIL
+  WEBSITE
+  OTHER
+}
+
+enum IncidentStatus {
+  OPEN
+  IN_REVIEW
+  ESCALATED
+  RESOLVED
+  CLOSED
+}
+
+enum Severity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AbuseCategory {
+  IMPERSONATION
+  HARASSMENT
+  SCAM_FRAUD
+  PHISHING
+  DOXXING
+  EXTORTION
+  HATE_SPEECH
+  NON_CONSENSUAL_CONTENT
+  COPYRIGHT_TRADEMARK
+  OTHER
+}
+
+enum AnalysisType {
+  IMPERSONATION_MATCH
+  CONTENT_CLASSIFICATION
+  RISK_SCORING
+  METADATA_EXTRACTION
+  SIMILARITY_CHECK
+  SUMMARY
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String
+  displayName  String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  officialAccounts   OfficialAccount[]
+  suspiciousProfiles SuspiciousProfile[]
+  incidents          Incident[]
+  abuseReports       AbuseReport[]
+  evidence           Evidence[]
+  timelineEvents     TimelineEvent[]
+  analyses           Analysis[]
+
+  @@map("users")
+}
+
+model OfficialAccount {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  platform    Platform
+  handle      String
+  displayName String?
+  profileUrl  String?
+  verified    Boolean  @default(false)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incidents Incident[]
+  analyses  Analysis[]
+
+  @@unique([userId, platform, handle])
+  @@index([userId])
+  @@index([platform, handle])
+  @@map("official_accounts")
+}
+
+model SuspiciousProfile {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @db.Uuid
+  platform    Platform
+  handle      String
+  displayName String?
+  profileUrl  String?
+  bio         String?
+  firstSeenAt DateTime?
+  lastSeenAt  DateTime?
+  notes       String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incidents    Incident[]
+  abuseReports AbuseReport[]
+  analyses     Analysis[]
+
+  @@index([userId])
+  @@index([userId, platform])
+  @@index([platform, handle])
+  @@map("suspicious_profiles")
+}
+
+model Incident {
+  id                  String         @id @default(uuid()) @db.Uuid
+  userId              String         @db.Uuid
+  officialAccountId   String?        @db.Uuid
+  suspiciousProfileId String?        @db.Uuid
+  title               String
+  description         String?
+  status              IncidentStatus @default(OPEN)
+  severity            Severity       @default(MEDIUM)
+  category            AbuseCategory
+  occurredAt          DateTime?
+  resolvedAt          DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  officialAccount   OfficialAccount?   @relation(fields: [officialAccountId], references: [id], onDelete: SetNull)
+  suspiciousProfile SuspiciousProfile? @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
+  abuseReports      AbuseReport[]
+  evidence          Evidence[]
+  timelineEvents    TimelineEvent[]
+  analyses          Analysis[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([userId, severity])
+  @@index([userId, category])
+  @@index([officialAccountId])
+  @@index([suspiciousProfileId])
+  @@index([createdAt])
+  @@map("incidents")
+}
+
+model AbuseReport {
+  id                  String        @id @default(uuid()) @db.Uuid
+  userId              String        @db.Uuid
+  incidentId          String        @db.Uuid
+  suspiciousProfileId String?       @db.Uuid
+  platform            Platform
+  category            AbuseCategory
+  targetUrl           String?
+  referenceNumber     String?
+  reportStatus        String        @default("PENDING")
+  summary             String
+  submittedAt         DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incident          Incident           @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  suspiciousProfile SuspiciousProfile? @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
+  evidence          Evidence[]
+
+  @@index([userId])
+  @@index([incidentId])
+  @@index([suspiciousProfileId])
+  @@index([platform, reportStatus])
+  @@index([referenceNumber])
+  @@map("abuse_reports")
+}
+
+model Evidence {
+  id            String    @id @default(uuid()) @db.Uuid
+  userId        String    @db.Uuid
+  incidentId    String    @db.Uuid
+  abuseReportId String?   @db.Uuid
+  title         String
+  description   String?
+  sourceUrl     String?
+  storageKey    String?
+  fileName      String?
+  mimeType      String?
+  fileSize      Int?
+  sha256        String?
+  capturedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incident    Incident     @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  abuseReport AbuseReport? @relation(fields: [abuseReportId], references: [id], onDelete: SetNull)
+  analyses    Analysis[]
+
+  @@index([userId])
+  @@index([incidentId])
+  @@index([abuseReportId])
+  @@index([sha256])
+  @@map("evidence")
+}
+
+model TimelineEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @db.Uuid
+  incidentId  String   @db.Uuid
+  eventType   String
+  title       String
+  description String?
+  metadata    Json?
+  occurredAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incident Incident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([incidentId, occurredAt])
+  @@index([eventType])
+  @@map("timeline_events")
+}
+
+model Analysis {
+  id                  String       @id @default(uuid()) @db.Uuid
+  userId              String       @db.Uuid
+  incidentId          String       @db.Uuid
+  officialAccountId   String?      @db.Uuid
+  suspiciousProfileId String?      @db.Uuid
+  evidenceId          String?      @db.Uuid
+  type                AnalysisType
+  summary             String?
+  confidence          Float?
+  result              Json
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incident          Incident           @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  officialAccount   OfficialAccount?   @relation(fields: [officialAccountId], references: [id], onDelete: SetNull)
+  suspiciousProfile SuspiciousProfile? @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
+  evidence          Evidence?          @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([incidentId])
+  @@index([incidentId, type])
+  @@index([officialAccountId])
+  @@index([suspiciousProfileId])
+  @@index([evidenceId])
+  @@map("analyses")
+}
