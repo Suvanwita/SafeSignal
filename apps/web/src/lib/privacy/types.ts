@@ -56,6 +56,7 @@ export interface ScanSensitiveTextPayload {
   text: string;
   categories?: SensitiveCategory[];
   minConfidence?: ConfidenceLevel;
+  incidentId?: string;
 }
 
 export interface RedactSensitiveTextPayload {

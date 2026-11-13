@@ -126,3 +126,24 @@ export const INCIDENT_STATUS_MAP: Record<
   RESOLVED: { label: 'Resolved', statusBadge: 'resolved' },
   CLOSED: { label: 'Closed', statusBadge: 'closed' },
 };
+
+export interface ListTimelineQuery {
+  page?: number;
+  limit?: number;
+  order?: 'asc' | 'desc';
+  eventType?: string;
+  search?: string;
+}
+
+export interface TimelinePaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
+export interface PaginatedTimelineResponse {
+  events: IncidentTimelineEvent[];
+  pagination: TimelinePaginationMeta;
+}

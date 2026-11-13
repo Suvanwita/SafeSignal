@@ -20,6 +20,8 @@ import type {
 import type { LinkProfilesDto } from './dto/link-profiles.dto';
 import type { LinkReportsDto } from './dto/link-reports.dto';
 import type { ListIncidentsQueryDto } from './dto/list-incidents-query.dto';
+import type { ListTimelineQueryDto } from './dto/list-timeline-query.dto';
+import type { PaginatedTimelineResponseDto } from './dto/paginated-timeline-response.dto';
 import type { ReopenIncidentDto } from './dto/reopen-incident.dto';
 import type { UpdateIncidentStatusDto } from './dto/update-incident-status.dto';
 import type { UpdateIncidentDto } from './dto/update-incident.dto';
@@ -233,8 +235,9 @@ export class IncidentsService {
             severity: incident.severity,
             officialAccountId: dto.officialAccountId ?? null,
             suspiciousProfileId: dto.suspiciousProfileId ?? null,
+            incidentOccurredAt: occurredAt ?? null,
           } as Prisma.InputJsonValue,
-          occurredAt: occurredAt ?? now,
+          occurredAt: now,
         },
       });
 
@@ -822,8 +825,9 @@ export class IncidentsService {
             mimeType: evidence.mimeType,
             sha256: evidence.sha256,
             abuseReportId: evidence.abuseReportId,
+            capturedAt: capturedAt?.toISOString() ?? null,
           } as Prisma.InputJsonValue,
-          occurredAt: capturedAt ?? now,
+          occurredAt: now,
         },
       });
 
@@ -834,6 +838,70 @@ export class IncidentsService {
     });
 
     return this.toDetailResponseDto(result);
+  }
+
+  async getTimelineForUser(
+    userId: string,
+    incidentId: string,
+    query: ListTimelineQueryDto = {},
+  ): Promise<PaginatedTimelineResponseDto> {
+    const incident = await this.prisma.incident.findUnique({
+      where: { id: incidentId },
+      select: { id: true, userId: true },
+    });
+    assertOwnedResource(incident, userId, 'Incident');
+
+    const page = Math.max(1, query.page ?? 1);
+    const limit = Math.min(100, Math.max(1, query.limit ?? 10));
+    const skip = (page - 1) * limit;
+    const order = query.order === 'asc' ? 'asc' : 'desc';
+
+    const where: Prisma.TimelineEventWhereInput = {
+      incidentId,
+      userId,
+      ...(query.eventType ? { eventType: query.eventType } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { title: { contains: query.search, mode: 'insensitive' } },
+              { description: { contains: query.search, mode: 'insensitive' } },
+              { eventType: { contains: query.search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, events] = await Promise.all([
+      this.prisma.timelineEvent.count({ where }),
+      this.prisma.timelineEvent.findMany({
+        where,
+        orderBy: [{ occurredAt: order }, { createdAt: order }],
+        skip,
+        take: limit,
+      }),
+    ]);
+
+    const totalPages = Math.ceil(total / limit) || 1;
+
+    return {
+      events: events.map((e) => ({
+        id: e.id,
+        incidentId: e.incidentId,
+        eventType: e.eventType,
+        title: e.title,
+        description: e.description,
+        metadata: e.metadata,
+        occurredAt: e.occurredAt,
+        createdAt: e.createdAt,
+      })),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasMore: page < totalPages,
+      },
+    };
   }
 
   private resolveStatusEventDetails(

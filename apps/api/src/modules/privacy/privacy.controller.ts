@@ -3,6 +3,8 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Param,
+  ParseUUIDPipe,
   Post,
 } from '@nestjs/common';
 import {
@@ -13,6 +15,7 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { CurrentUser } from '../../common';
 import { RedactSensitiveTextResponseDto } from './dto/redact-text-response.dto';
 import { RedactSensitiveTextDto } from './dto/redact-text.dto';
 import { ScanSensitiveTextResponseDto } from './dto/scan-text-response.dto';
@@ -31,20 +34,42 @@ export class PrivacyController {
     summary:
       'Scan text for sensitive information (emails, Indian phones, international phones, addresses)',
     description:
-      'Inspects input text using deterministic regex rules and address heuristics. Content is analyzed purely in-memory and is never stored in DB tables or sent to third-party APIs.',
+      'Inspects input text using deterministic regex rules and address heuristics. Content is analyzed purely in-memory and is never stored in DB tables or sent to third-party APIs. If incidentId is provided, records a timeline event.',
   })
   @ApiOkResponse({
     type: ScanSensitiveTextResponseDto,
-    description: 'Sensitive data detection results with positions, categories, and confidence',
+    description:
+      'Sensitive data detection results with positions, categories, and confidence',
   })
   @ApiBadRequestResponse({
-    description: 'Invalid input or text exceeds maximum character limit (50,000)',
+    description:
+      'Invalid input or text exceeds maximum character limit (50,000)',
   })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
   scan(
+    @CurrentUser('id') userId: string,
     @Body() dto: ScanSensitiveTextDto,
   ): Promise<ScanSensitiveTextResponseDto> {
-    return this.privacyService.scanText(dto);
+    return this.privacyService.scanText(dto, userId);
+  }
+
+  @Post('scan-incident/:incidentId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Scan all text in an incident case for sensitive PII/SPI',
+    description:
+      'Aggregates incident description, reports, and evidence notes, scans for sensitive personal data, and records a PRIVACY_SCAN_COMPLETED event on the incident timeline.',
+  })
+  @ApiOkResponse({
+    type: ScanSensitiveTextResponseDto,
+    description: 'Privacy scan results for incident case',
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  scanIncident(
+    @CurrentUser('id') userId: string,
+    @Param('incidentId', ParseUUIDPipe) incidentId: string,
+  ): Promise<ScanSensitiveTextResponseDto> {
+    return this.privacyService.scanIncidentForUser(userId, incidentId);
   }
 
   @Post('redact')
@@ -60,7 +85,8 @@ export class PrivacyController {
     description: 'Redacted text and list of applied redaction operations',
   })
   @ApiBadRequestResponse({
-    description: 'Invalid input or text exceeds maximum character limit (50,000)',
+    description:
+      'Invalid input or text exceeds maximum character limit (50,000)',
   })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
   redact(

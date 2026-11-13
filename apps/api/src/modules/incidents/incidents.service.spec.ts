@@ -46,6 +46,8 @@ describe('IncidentsService', () => {
     };
     timelineEvent: {
       create: jest.Mock;
+      findMany: jest.Mock;
+      count: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -134,7 +136,11 @@ describe('IncidentsService', () => {
         updateMany: tx.abuseReport.updateMany,
       },
       evidence: tx.evidence,
-      timelineEvent: tx.timelineEvent,
+      timelineEvent: {
+        create: tx.timelineEvent.create,
+        findMany: jest.fn(),
+        count: jest.fn(),
+      },
       $transaction: jest.fn(async (cb: (txArg: typeof tx) => Promise<unknown>) =>
         cb(tx),
       ),
@@ -519,6 +525,142 @@ describe('IncidentsService', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('getTimelineForUser', () => {
+    it('returns paginated chronological events when user owns the incident', async () => {
+      prisma.incident.findUnique.mockResolvedValueOnce({
+        id: incidentId,
+        userId,
+      });
+
+      const mockEvents = [
+        {
+          id: 'event-1',
+          incidentId,
+          userId,
+          eventType: 'INCIDENT_CREATED',
+          title: 'Incident created: Harassment report',
+          description: 'Case opened.',
+          metadata: {},
+          occurredAt: new Date('2026-11-01T10:00:00.000Z'),
+          createdAt: new Date('2026-11-01T10:00:00.000Z'),
+        },
+        {
+          id: 'event-2',
+          incidentId,
+          userId,
+          eventType: 'EVIDENCE_ATTACHED',
+          title: 'Evidence attached: Threat screenshot',
+          description: 'Attached file: screenshot.png',
+          metadata: { evidenceId: 'ev-1' },
+          occurredAt: new Date('2026-11-01T10:05:00.000Z'),
+          createdAt: new Date('2026-11-01T10:05:00.000Z'),
+        },
+      ];
+
+      prisma.timelineEvent.count.mockResolvedValueOnce(2);
+      prisma.timelineEvent.findMany.mockResolvedValueOnce(mockEvents);
+
+      const result = await service.getTimelineForUser(userId, incidentId, {
+        page: 1,
+        limit: 10,
+        order: 'asc',
+      });
+
+      expect(prisma.incident.findUnique).toHaveBeenCalledWith({
+        where: { id: incidentId },
+        select: { id: true, userId: true },
+      });
+      expect(prisma.timelineEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            incidentId,
+            userId,
+          }),
+          orderBy: [{ occurredAt: 'asc' }, { createdAt: 'asc' }],
+          skip: 0,
+          take: 10,
+        }),
+      );
+      expect(result.events).toHaveLength(2);
+      expect(result.pagination).toEqual({
+        page: 1,
+        limit: 10,
+        total: 2,
+        totalPages: 1,
+        hasMore: false,
+      });
+    });
+
+    it('filters by eventType and search term if provided', async () => {
+      prisma.incident.findUnique.mockResolvedValueOnce({
+        id: incidentId,
+        userId,
+      });
+
+      prisma.timelineEvent.count.mockResolvedValueOnce(1);
+      prisma.timelineEvent.findMany.mockResolvedValueOnce([
+        {
+          id: 'event-3',
+          incidentId,
+          userId,
+          eventType: 'PRIVACY_SCAN_COMPLETED',
+          title: 'Privacy scan completed',
+          description: 'Automated privacy scan detected sensitive information.',
+          metadata: { findingsCount: 2 },
+          occurredAt: new Date('2026-11-01T10:10:00.000Z'),
+          createdAt: new Date('2026-11-01T10:10:00.000Z'),
+        },
+      ]);
+
+      const result = await service.getTimelineForUser(userId, incidentId, {
+        page: 2,
+        limit: 5,
+        order: 'desc',
+        eventType: 'PRIVACY_SCAN_COMPLETED',
+        search: 'scan',
+      });
+
+      expect(prisma.timelineEvent.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            incidentId,
+            userId,
+            eventType: 'PRIVACY_SCAN_COMPLETED',
+            OR: [
+              { title: { contains: 'scan', mode: 'insensitive' } },
+              { description: { contains: 'scan', mode: 'insensitive' } },
+              { eventType: { contains: 'scan', mode: 'insensitive' } },
+            ],
+          }),
+          skip: 5,
+          take: 5,
+          orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
+        }),
+      );
+      expect(result.events).toHaveLength(1);
+      expect(result.pagination.page).toBe(2);
+    });
+
+    it('throws ForbiddenException when incident does not belong to user', async () => {
+      prisma.incident.findUnique.mockResolvedValueOnce({
+        id: incidentId,
+        userId: 'other-user',
+      });
+
+      await expect(
+        service.getTimelineForUser(userId, incidentId),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('throws NotFoundException when incident does not exist', async () => {
+      prisma.incident.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getTimelineForUser(userId, incidentId),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

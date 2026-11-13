@@ -1,5 +1,10 @@
 import { AuthApiError, ensureCsrfToken } from '@/lib/auth/client-api';
-import type { IncidentDetail, IncidentSummary } from './types';
+import type {
+  IncidentDetail,
+  IncidentSummary,
+  ListTimelineQuery,
+  PaginatedTimelineResponse,
+} from './types';
 
 async function requestBff<T>(
   url: string,
@@ -187,4 +192,22 @@ export async function unlinkProfileFromIncident(
     },
   );
   return res.incident;
+}
+
+export async function fetchIncidentTimeline(
+  incidentId: string,
+  query: ListTimelineQuery = {},
+): Promise<PaginatedTimelineResponse> {
+  const params = new URLSearchParams();
+  if (query.page) params.set('page', String(query.page));
+  if (query.limit) params.set('limit', String(query.limit));
+  if (query.order) params.set('order', query.order);
+  if (query.eventType) params.set('eventType', query.eventType);
+  if (query.search) params.set('search', query.search);
+
+  const qs = params.toString();
+  return requestBff<PaginatedTimelineResponse>(
+    `/api/incidents/${encodeURIComponent(incidentId)}/timeline${qs ? `?${qs}` : ''}`,
+    { method: 'GET' },
+  );
 }

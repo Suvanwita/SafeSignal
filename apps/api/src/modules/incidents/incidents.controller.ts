@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpStatus,
@@ -32,6 +33,8 @@ import {
 import { LinkProfilesDto } from './dto/link-profiles.dto';
 import { LinkReportsDto } from './dto/link-reports.dto';
 import { ListIncidentsQueryDto } from './dto/list-incidents-query.dto';
+import { ListTimelineQueryDto } from './dto/list-timeline-query.dto';
+import { PaginatedTimelineResponseDto } from './dto/paginated-timeline-response.dto';
 import { ReopenIncidentDto } from './dto/reopen-incident.dto';
 import { UpdateIncidentStatusDto } from './dto/update-incident-status.dto';
 import { UpdateIncidentDto } from './dto/update-incident.dto';
@@ -216,5 +219,55 @@ export class IncidentsController {
     @Body() dto: AttachEvidenceDto,
   ): Promise<IncidentDetailResponseDto> {
     return this.incidentsService.attachEvidenceForUser(userId, id, dto);
+  }
+
+  @Get(':id/timeline')
+  @ApiOperation({
+    summary: 'Get paginated chronological timeline events for an incident',
+  })
+  @ApiOkResponse({ type: PaginatedTimelineResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({ description: 'Incident not found' })
+  getTimeline(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: ListTimelineQueryDto,
+  ): Promise<PaginatedTimelineResponseDto> {
+    return this.incidentsService.getTimelineForUser(userId, id, query);
+  }
+
+  @Patch(':id/timeline/:eventId')
+  @HttpCode(HttpStatus.FORBIDDEN)
+  @ApiOperation({
+    summary:
+      'Attempt to edit system-generated historical timeline events (Forbidden)',
+  })
+  @ApiForbiddenResponse({
+    description: 'Historical timeline events are immutable',
+  })
+  updateTimelineEvent(): never {
+    throw new ForbiddenException({
+      code: 'FORBIDDEN_IMMUTABLE_EVENT',
+      message:
+        'System-generated historical timeline events are immutable and cannot be edited.',
+    });
+  }
+
+  @Delete(':id/timeline/:eventId')
+  @HttpCode(HttpStatus.FORBIDDEN)
+  @ApiOperation({
+    summary:
+      'Attempt to delete system-generated historical timeline events (Forbidden)',
+  })
+  @ApiForbiddenResponse({
+    description: 'Historical timeline events are immutable',
+  })
+  deleteTimelineEvent(): never {
+    throw new ForbiddenException({
+      code: 'FORBIDDEN_IMMUTABLE_EVENT',
+      message:
+        'System-generated historical timeline events are immutable and cannot be deleted.',
+    });
   }
 }

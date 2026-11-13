@@ -233,8 +233,9 @@ export class EvidenceService {
               sha256: evidence.sha256,
               format: validated.format,
               abuseReportId: evidence.abuseReportId,
+              capturedAt: capturedAt?.toISOString() ?? null,
             } as Prisma.InputJsonValue,
-            occurredAt: capturedAt ?? now,
+            occurredAt: now,
           },
         });
 

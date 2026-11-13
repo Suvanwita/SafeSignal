@@ -65,3 +65,19 @@ export async function redactSensitiveText(
     body: JSON.stringify(payload),
   });
 }
+
+export async function scanIncidentPrivacy(
+  incidentId: string,
+): Promise<ScanSensitiveTextResponse> {
+  return requestBff<ScanSensitiveTextResponse>(
+    `/api/privacy/scan-incident/${encodeURIComponent(incidentId)}`,
+    {
+      method: 'POST',
+      requireCsrf: true,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    },
+  );
+}

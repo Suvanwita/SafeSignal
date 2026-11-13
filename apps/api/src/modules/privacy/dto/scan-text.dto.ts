@@ -56,4 +56,13 @@ export class ScanSensitiveTextDto {
   @IsOptional()
   @IsEnum(ConfidenceLevel)
   minConfidence?: ConfidenceLevel;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional incident ID to associate with this privacy scan and log a timeline event',
+    format: 'uuid',
+  })
+  @IsOptional()
+  @IsString()
+  incidentId?: string;
 }

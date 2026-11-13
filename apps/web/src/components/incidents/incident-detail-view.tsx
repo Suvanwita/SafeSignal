@@ -27,6 +27,7 @@ import {
 } from 'lucide-react';
 import { UploadEvidenceDialog } from '@/components/evidence/upload-evidence-dialog';
 import { VerifyEvidenceDialog } from '@/components/evidence/verify-evidence-dialog';
+import { IncidentTimelineView } from '@/components/incidents/incident-timeline-view';
 import { AppShell } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -918,74 +919,11 @@ export function IncidentDetailView({
         </Card>
 
         {/* SECTION 4: CHRONOLOGICAL TIMELINE */}
-        <Card className="border-slate-200">
-          <CardHeader className="pb-3">
-            <div className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-slate-400" />
-              <div>
-                <CardTitle className="text-base">Audit Trail & Timeline</CardTitle>
-                <CardDescription>
-                  Chronological history of case creation, status changes, linked reports, and evidence.
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {incident.timelineEvents.length === 0 ? (
-              <div className="p-4 text-center text-sm text-slate-500">
-                No timeline events recorded.
-              </div>
-            ) : (
-              <div className="relative pl-6 before:absolute before:bottom-0 before:left-2.5 before:top-2 before:w-0.5 before:bg-slate-200">
-                <div className="space-y-6">
-                  {incident.timelineEvents.map((evt) => (
-                    <div key={evt.id} className="relative">
-                      {/* Timeline Dot */}
-                      <span className="absolute -left-6 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-white ring-4 ring-slate-100">
-                        <span
-                          className={`h-2.5 w-2.5 rounded-full ${
-                            evt.eventType === 'INCIDENT_CREATED'
-                              ? 'bg-blue-600'
-                              : evt.eventType === 'INCIDENT_ESCALATED'
-                                ? 'bg-red-600'
-                                : evt.eventType === 'INCIDENT_CLOSED'
-                                  ? 'bg-slate-600'
-                                  : evt.eventType === 'INCIDENT_RESOLVED'
-                                    ? 'bg-emerald-600'
-                                    : evt.eventType.includes('LINKED')
-                                      ? 'bg-indigo-600'
-                                      : 'bg-amber-600'
-                          }`}
-                        />
-                      </span>
-
-                      <div className="rounded-lg border border-slate-200 bg-white p-3.5 shadow-sm">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="font-semibold text-slate-900 text-sm">
-                            {evt.title}
-                          </span>
-                          <span className="text-xs text-slate-400">
-                            {formatDateTime(evt.occurredAt)}
-                          </span>
-                        </div>
-
-                        {evt.description && (
-                          <p className="mt-1 text-xs text-slate-600">
-                            {evt.description}
-                          </p>
-                        )}
-
-                        <div className="mt-1.5 flex items-center gap-2 text-[11px] font-mono text-slate-400">
-                          <span>Event: {evt.eventType}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <IncidentTimelineView
+          incidentId={incident.id}
+          initialEvents={incident.timelineEvents}
+          onRefreshIncident={refreshIncident}
+        />
       </div>
 
       {/* DIALOG 1: UPDATE STATUS / SEVERITY */}

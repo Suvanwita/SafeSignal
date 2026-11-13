@@ -7,9 +7,18 @@ import { PrivacyService } from './privacy.service';
 
 describe('PrivacyService', () => {
   let service: PrivacyService;
+  let prismaMock: any;
 
   beforeEach(() => {
-    service = new PrivacyService();
+    prismaMock = {
+      incident: {
+        findUnique: jest.fn(),
+      },
+      timelineEvent: {
+        create: jest.fn().mockResolvedValue({ id: 'evt-priv-1' }),
+      },
+    };
+    service = new PrivacyService(prismaMock);
   });
 
   describe('scanText', () => {
@@ -64,6 +73,67 @@ describe('PrivacyService', () => {
       expect(res.categoryBreakdown[SensitiveCategory.EMAIL]).toBe(1);
       expect(res.categoryBreakdown[SensitiveCategory.PHONE_INDIAN]).toBe(0);
     });
+
+    it('creates a PRIVACY_SCAN_COMPLETED timeline event when incidentId and userId are provided', async () => {
+      prismaMock.incident.findUnique.mockResolvedValue({
+        id: 'inc-123',
+        userId: 'user-456',
+        title: 'Harassment Case',
+      });
+
+      const text = 'Send funds to victim@secure.org or call +91 98765 43210';
+      const res = await service.scanText(
+        { text, incidentId: 'inc-123' },
+        'user-456',
+      );
+
+      expect(res.totalDetections).toBe(2);
+      expect(prismaMock.timelineEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'user-456',
+          incidentId: 'inc-123',
+          eventType: 'PRIVACY_SCAN_COMPLETED',
+          title: expect.stringContaining('Privacy scan completed (2 sensitive items detected)'),
+          occurredAt: expect.any(Date),
+        }),
+      });
+    });
+  });
+
+  describe('scanIncidentForUser', () => {
+    it('aggregates incident textual content and records PRIVACY_SCAN_COMPLETED', async () => {
+      prismaMock.incident.findUnique.mockResolvedValue({
+        id: 'inc-case-1',
+        userId: 'user-owner',
+        title: 'Extortion Investigation',
+        description: 'Blackmailer claims to have photos.',
+        abuseReports: [
+          {
+            title: 'Threat on WhatsApp',
+            description: 'Perpetrator gave email extortionist@evil.com to pay.',
+            platform: 'WHATSAPP',
+          },
+        ],
+        evidence: [
+          {
+            title: 'Chat Export',
+            description: 'Transcript containing phone +91 98765 43210',
+          },
+        ],
+      });
+
+      const res = await service.scanIncidentForUser('user-owner', 'inc-case-1');
+
+      expect(res.hasSensitiveData).toBe(true);
+      expect(res.totalDetections).toBeGreaterThan(0);
+      expect(prismaMock.timelineEvent.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'user-owner',
+          incidentId: 'inc-case-1',
+          eventType: 'PRIVACY_SCAN_COMPLETED',
+        }),
+      });
+    });
   });
 
   describe('redactText', () => {
@@ -99,10 +169,11 @@ describe('PrivacyService', () => {
       const res = await service.redactText({
         text,
         strategy: RedactionStrategy.CUSTOM,
-        customPlaceholder: '[CUSTODY_MASKED]',
+        customPlaceholder: '[SECRET]',
       });
 
-      expect(res.redactedText).toBe('Email: [CUSTODY_MASKED]');
+      expect(res.redactedText).toBe('Email: [SECRET]');
+      expect(res.redactionCount).toBe(1);
     });
   });
 });
