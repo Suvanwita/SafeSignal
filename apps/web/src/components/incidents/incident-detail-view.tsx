@@ -14,6 +14,7 @@ import {
   Copy,
   Download,
   ExternalLink,
+  FileDown,
   FileText,
   FolderLock,
   Link2,
@@ -63,6 +64,7 @@ import {
 import type { AuthUser } from '@/lib/auth/types';
 import {
   closeIncident,
+  downloadIncidentPdfReport,
   fetchIncidentById,
   linkProfilesToIncident,
   linkReportsToIncident,
@@ -267,6 +269,31 @@ export function IncidentDetailView({
     document.body.removeChild(link);
   };
 
+  const [isDownloadingReport, setIsDownloadingReport] = React.useState(false);
+
+  const handleDownloadReport = async () => {
+    setIsDownloadingReport(true);
+    notify.verified(
+      'Generating PDF Report',
+      'Compiling authoritative incident dossier with cryptographic audit trail...',
+    );
+    try {
+      await downloadIncidentPdfReport(incident.id);
+      notify.verified(
+        'Report Downloaded',
+        `SafeSignal-Incident-${incident.id.slice(0, 8)}.pdf saved successfully.`,
+      );
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to download incident PDF report.';
+      notify.alert('Download Failed', msg);
+    } finally {
+      setIsDownloadingReport(false);
+    }
+  };
+
   const refreshIncident = React.useCallback(async () => {
     setIsRefreshing(true);
     try {
@@ -458,6 +485,23 @@ export function IncidentDetailView({
             aria-label="Refresh incident details"
           >
             <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDownloadReport}
+            disabled={isDownloadingReport}
+            className="gap-1.5 text-xs font-semibold text-slate-700"
+            title="Download official PDF report dossier with cryptographic audit trail"
+          >
+            {isDownloadingReport ? (
+              <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+            ) : (
+              <FileDown className="h-4 w-4 text-blue-600" />
+            )}
+            <span className="hidden sm:inline">Download Report</span>
+            <span className="sm:hidden">PDF</span>
           </Button>
 
           <Button

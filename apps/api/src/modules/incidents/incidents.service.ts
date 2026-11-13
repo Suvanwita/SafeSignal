@@ -13,6 +13,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { AttachEvidenceDto } from './dto/attach-evidence.dto';
 import type { CloseIncidentDto } from './dto/close-incident.dto';
 import type { CreateIncidentDto } from './dto/create-incident.dto';
+import {
+  type GeneratedPdfReport,
+  IncidentReportPdfService,
+} from './incident-report-pdf.service';
 import type {
   IncidentDetailResponseDto,
   IncidentSummaryResponseDto,
@@ -137,7 +141,12 @@ type IncidentDetailPayload = Prisma.IncidentGetPayload<{
 
 @Injectable()
 export class IncidentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly reportPdfService: IncidentReportPdfService = new IncidentReportPdfService(
+      prisma,
+    ),
+  ) {}
 
   async findAllForUser(
     userId: string,
@@ -902,6 +911,13 @@ export class IncidentsService {
         hasMore: page < totalPages,
       },
     };
+  }
+
+  async generatePdfReportForUser(
+    userId: string,
+    incidentId: string,
+  ): Promise<GeneratedPdfReport> {
+    return this.reportPdfService.generateIncidentPdfForUser(userId, incidentId);
   }
 
   private resolveStatusEventDetails(

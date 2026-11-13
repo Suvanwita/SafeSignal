@@ -212,3 +212,37 @@ export async function fetchIncidentTimeline(
     { method: 'GET' },
   );
 }
+
+export async function downloadIncidentPdfReport(incidentId: string): Promise<void> {
+  const res = await fetch(
+    `/api/incidents/${encodeURIComponent(incidentId)}/report/pdf`,
+    {
+      method: 'GET',
+      headers: {
+        Accept: 'application/pdf',
+      },
+    },
+  );
+
+  if (!res.ok) {
+    const errorPayload = await res.json().catch(() => null);
+    const message =
+      errorPayload?.error?.message ??
+      'Failed to download incident PDF report dossier.';
+    throw new AuthApiError(
+      errorPayload?.error?.code ?? 'REPORT_DOWNLOAD_FAILED',
+      message,
+      res.status,
+    );
+  }
+
+  const blob = await res.blob();
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `SafeSignal-Incident-${incidentId.slice(0, 8)}.pdf`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+}

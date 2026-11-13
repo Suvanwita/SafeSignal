@@ -11,6 +11,8 @@ import {
   Patch,
   Post,
   Query,
+  Res,
+  StreamableFile,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -19,10 +21,12 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiProduces,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import { CurrentUser } from '../../common';
+import type { Response as ExpressResponse } from 'express';
+import { CurrentUser, SkipResponseTransform } from '../../common';
 import { AttachEvidenceDto } from './dto/attach-evidence.dto';
 import { CloseIncidentDto } from './dto/close-incident.dto';
 import { CreateIncidentDto } from './dto/create-incident.dto';
@@ -235,6 +239,38 @@ export class IncidentsController {
     @Query() query: ListTimelineQueryDto,
   ): Promise<PaginatedTimelineResponseDto> {
     return this.incidentsService.getTimelineForUser(userId, id, query);
+  }
+
+  @Get(':id/report/pdf')
+  @SkipResponseTransform()
+  @ApiOperation({
+    summary:
+      'Generate and download official incident PDF dossier (restricted to owner)',
+    description:
+      'Generates an authoritative, confidential PDF incident report containing branding, case details, linked abuse reports, suspicious profiles, evidence hashes and verification statuses, safety intelligence analysis, and chronological audit timeline.',
+  })
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({ description: 'Binary PDF incident dossier' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({ description: 'Incident not found' })
+  async downloadPdfReport(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res({ passthrough: true }) res: ExpressResponse,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } =
+      await this.incidentsService.generatePdfReportForUser(userId, id);
+
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length': buffer.length,
+      'Cache-Control': 'private, no-cache, no-store, must-revalidate',
+      'X-Content-Type-Options': 'nosniff',
+    });
+
+    return new StreamableFile(buffer);
   }
 
   @Patch(':id/timeline/:eventId')
