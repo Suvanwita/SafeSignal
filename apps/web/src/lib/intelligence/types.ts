@@ -166,3 +166,72 @@ export interface UpdateSuspiciousProfileStatusInput {
   reviewStatus: SuspiciousProfileStatus;
   notes?: string | null;
 }
+
+export type SafetyRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+export type SafetyCategory =
+  | 'THREATS'
+  | 'HARASSMENT'
+  | 'ABUSIVE_LANGUAGE'
+  | 'SENSITIVE_INFO'
+  | 'REPEATED_ACTIVITY'
+  | 'MULTI_VECTOR'
+  | 'BENIGN';
+
+export interface SafetyIndicator {
+  id: string;
+  category: string;
+  severity: SafetyRiskLevel;
+  title: string;
+  explanation: string;
+  matchedTerms: string[];
+  occurrences: number;
+  snippet?: string;
+}
+
+export interface SafetyAnalysisMetrics {
+  textLength: number;
+  wordCount: number;
+  repeatedActivity: {
+    repeatedPhrasesCount?: number;
+    duplicateSentences?: string[];
+    highCapsRatio?: boolean;
+    capsRatio?: number;
+    punctuationAggression?: boolean;
+    incidentReportCount?: number;
+    incidentProfileCount?: number;
+    rapidTimelineEscalation?: boolean;
+  };
+}
+
+export interface SafetyAnalysisResult {
+  id?: string;
+  category: SafetyCategory;
+  secondaryCategories: SafetyCategory[];
+  riskLevel: SafetyRiskLevel;
+  overallScore: number;
+  summary: string;
+  indicators: SafetyIndicator[];
+  explanations: string[];
+  suggestedActions: string[];
+  disclaimer: string;
+  incidentId?: string | null;
+  evidenceId?: string | null;
+  metrics: SafetyAnalysisMetrics;
+  analyzedAt: string;
+  createdAt?: string;
+}
+
+export interface AnalyzeSafetyTextInput {
+  text: string;
+  incidentId?: string;
+  evidenceId?: string;
+  persist?: boolean;
+  customAbuseKeywords?: string[];
+  customThreatKeywords?: string[];
+  customHarassmentKeywords?: string[];
+}
+
+export const SAFETY_INTELLIGENCE_DISCLAIMER =
+  'SafeSignal Safety Intelligence provides automated heuristic pattern matching and rule-based risk classification to assist users with case documentation and triage. This analysis does not establish criminal intent, legal liability, or evidentiary proof of guilt, nor does it determine whether an allegation is true or false. Automated indicators should be reviewed and corroborated by qualified legal, law enforcement, or platform safety personnel.';
+

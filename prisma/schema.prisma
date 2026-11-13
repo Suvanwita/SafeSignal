@@ -63,6 +63,7 @@ enum AnalysisType {
   METADATA_EXTRACTION
   SIMILARITY_CHECK
   SUMMARY
+  SAFETY_INTELLIGENCE
 }
 
 enum SuspiciousProfileStatus {

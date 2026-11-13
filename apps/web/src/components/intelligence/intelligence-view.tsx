@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ScanSearch,
   Search,
+  Shield,
   ShieldAlert,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
@@ -34,6 +35,7 @@ import {
   type SuspiciousProfileStatus,
 } from '@/lib/intelligence/types';
 import { ReportProfileDialog } from './report-profile-dialog';
+import { SafetyIntelligenceView } from './safety-intelligence-view';
 import { SimilarityBreakdownPanel } from './similarity-breakdown-panel';
 import { SuspiciousProfileCard } from './suspicious-profile-card';
 
@@ -50,6 +52,9 @@ export function IntelligenceView({
   officialAccountCount,
   incidents = [],
 }: IntelligenceViewProps) {
+  const [activeTab, setActiveTab] = React.useState<'SAFETY' | 'PROFILES'>(
+    'SAFETY',
+  );
   const [profiles, setProfiles] = React.useState<SuspiciousProfile[]>(
     () => initialProfiles ?? [],
   );
@@ -228,52 +233,90 @@ export function IntelligenceView({
 
   return (
     <AppShell
-      title="Suspicious Profiles & Intelligence"
-      subtitle="Submit observed profiles and review explainable similarity indicators"
+      title="Safety Intelligence & Threat Analysis"
+      subtitle="Evaluate threat severity, harassment indicators, sensitive personal information, and suspicious profiles"
       user={user}
       topBarActions={
-        <Button type="button" size="sm" onClick={() => setReportOpen(true)}>
-          <Plus className="h-4 w-4" />
-          Report Profile
-        </Button>
+        activeTab === 'PROFILES' ? (
+          <Button type="button" size="sm" onClick={() => setReportOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Report Profile
+          </Button>
+        ) : undefined
       }
     >
       <div className="space-y-6">
-        {/* Non-scraping & Indicator-Only Guidance Banner */}
-        <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-700">
-              <ScanSearch className="h-4 w-4" />
-            </div>
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 className="text-sm font-semibold text-slate-900">
-                  Explainable Similarity Analysis
-                </h2>
-                <Badge variant="neutral">Indicators Only</Badge>
-              </div>
-              <p className="mt-1 text-xs leading-relaxed text-slate-600">
-                SafeSignal compares your submitted profile fields (username,
-                display name, bio text, and URL/domain) against your
-                user-declared official accounts without scraping social media
-                websites. Scores highlight review indicators, never proof that an
-                account is fake.
-              </p>
-            </div>
-          </div>
-
-          <Button
+        {/* TAB SWITCHER */}
+        <div className="flex border-b border-slate-200">
+          <button
             type="button"
-            variant="outline"
-            size="sm"
-            loading={reloading}
-            onClick={refreshProfiles}
-            className="shrink-0"
+            onClick={() => setActiveTab('SAFETY')}
+            className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition-colors ${
+              activeTab === 'SAFETY'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Refresh
-          </Button>
+            <Shield className="h-4 w-4" />
+            <span>Safety Intelligence & Rule Engine</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('PROFILES')}
+            className={`inline-flex items-center gap-2 border-b-2 px-4 py-2.5 text-xs font-semibold transition-colors ${
+              activeTab === 'PROFILES'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <ScanSearch className="h-4 w-4" />
+            <span>Suspicious Profiles ({profiles.length})</span>
+          </button>
         </div>
+
+        {/* SAFETY INTELLIGENCE VIEW TAB */}
+        {activeTab === 'SAFETY' && (
+          <SafetyIntelligenceView incidents={incidents} />
+        )}
+
+        {/* SUSPICIOUS PROFILES TAB */}
+        {activeTab === 'PROFILES' && (
+          <div className="space-y-6">
+            {/* Non-scraping & Indicator-Only Guidance Banner */}
+            <div className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-slate-200 bg-slate-50 text-slate-700">
+                  <ScanSearch className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-slate-900">
+                      Explainable Similarity Analysis
+                    </h2>
+                    <Badge variant="neutral">Indicators Only</Badge>
+                  </div>
+                  <p className="mt-1 text-xs leading-relaxed text-slate-600">
+                    SafeSignal compares your submitted profile fields (username,
+                    display name, bio text, and URL/domain) against your
+                    user-declared official accounts without scraping social media
+                    websites. Scores highlight review indicators, never proof that an
+                    account is fake.
+                  </p>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                loading={reloading}
+                onClick={refreshProfiles}
+                className="shrink-0"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Refresh
+              </Button>
+            </div>
 
         {officialAccountCount === 0 && (
           <div className="flex flex-col gap-3 rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-xs text-amber-950 sm:flex-row sm:items-center sm:justify-between">
@@ -469,6 +512,8 @@ export function IntelligenceView({
                 />
               )}
             </div>
+          </div>
+        )}
           </div>
         )}
       </div>

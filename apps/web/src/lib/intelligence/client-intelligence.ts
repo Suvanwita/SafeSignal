@@ -3,7 +3,9 @@
 import { AuthApiError, ensureCsrfToken } from '@/lib/auth/client-api';
 import type { ApiErrorDetail, ApiFailureEnvelope } from '@/lib/auth/types';
 import type {
+  AnalyzeSafetyTextInput,
   CreateSuspiciousProfileInput,
+  SafetyAnalysisResult,
   SuspiciousProfile,
   UpdateSuspiciousProfileStatusInput,
 } from './types';
@@ -106,3 +108,84 @@ export async function deleteSuspiciousProfile(
     'DELETE',
   );
 }
+
+export async function analyzeSafetyText(
+  input: AnalyzeSafetyTextInput,
+): Promise<SafetyAnalysisResult> {
+  const payload = await requestIntelligenceJson<{
+    analysis: SafetyAnalysisResult;
+  }>('/api/intelligence/safety/analyze-text', 'POST', input);
+  return payload.analysis;
+}
+
+export async function analyzeIncidentSafety(
+  incidentId: string,
+): Promise<SafetyAnalysisResult> {
+  const payload = await requestIntelligenceJson<{
+    analysis: SafetyAnalysisResult;
+  }>(
+    `/api/intelligence/safety/analyze-incident/${encodeURIComponent(incidentId)}`,
+    'POST',
+    {},
+  );
+  return payload.analysis;
+}
+
+export async function analyzeEvidenceSafety(
+  evidenceId: string,
+): Promise<SafetyAnalysisResult> {
+  const payload = await requestIntelligenceJson<{
+    analysis: SafetyAnalysisResult;
+  }>(
+    `/api/intelligence/safety/analyze-evidence/${encodeURIComponent(evidenceId)}`,
+    'POST',
+    {},
+  );
+  return payload.analysis;
+}
+
+export async function fetchSafetyAnalyses(
+  query: {
+    incidentId?: string;
+    evidenceId?: string;
+    riskLevel?: string;
+    category?: string;
+  } = {},
+): Promise<SafetyAnalysisResult[]> {
+  const params = new URLSearchParams();
+  if (query.incidentId) params.set('incidentId', query.incidentId);
+  if (query.evidenceId) params.set('evidenceId', query.evidenceId);
+  if (query.riskLevel) params.set('riskLevel', query.riskLevel);
+  if (query.category) params.set('category', query.category);
+
+  const qs = params.toString();
+  const url = `/api/intelligence/safety/analyses${qs ? `?${qs}` : ''}`;
+
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const errPayload = await res.json().catch(() => null);
+    throw new AuthApiError(
+      errPayload?.error?.message || 'Failed to fetch safety analyses',
+      errPayload?.error?.code || 'ANALYSES_FETCH_FAILED',
+      res.status,
+    );
+  }
+
+  const payload = await res.json();
+  return payload.analyses || payload.data || [];
+}
+
+export async function deleteSafetyAnalysis(
+  id: string,
+): Promise<{ deleted: true; id: string }> {
+  return requestIntelligenceJson<{ deleted: true; id: string }>(
+    `/api/intelligence/safety/analyses/${encodeURIComponent(id)}`,
+    'DELETE',
+  );
+}
+
