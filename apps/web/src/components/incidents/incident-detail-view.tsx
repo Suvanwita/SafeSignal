@@ -468,6 +468,10 @@ export function IncidentDetailView({
       title={incident.title}
       subtitle={`Incident Case #${incident.id.slice(0, 8)} • ${categoryLabel}`}
       user={user}
+      breadcrumbs={[
+        { label: 'Incident Management', href: '/incidents' },
+        { label: incident.title },
+      ]}
       topBarActions={
         <div className="flex flex-wrap items-center gap-2">
           <Button asChild variant="outline" size="sm">

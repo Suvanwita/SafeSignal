@@ -297,7 +297,15 @@ export function EvidenceDetailView({
   };
 
   return (
-    <AppShell user={user} title="Evidence Details">
+    <AppShell
+      user={user}
+      title="Evidence Details"
+      subtitle="Cryptographic SHA-256 verification, extracted metadata, and custody audit history."
+      breadcrumbs={[
+        { label: 'Evidence Vault', href: '/evidence' },
+        { label: evidence.title },
+      ]}
+    >
       <div className="space-y-6">
         {/* TOP BREADCRUMBS & NAVIGATION */}
         <div className="flex flex-wrap items-center justify-between gap-4">

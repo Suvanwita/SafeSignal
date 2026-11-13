@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Lock,
   Radar,
+  Settings,
   ShieldAlert,
   X,
 } from 'lucide-react';
@@ -23,6 +24,7 @@ import {
 } from './navigation.config';
 
 const NAV_ICONS: Record<NavItem['icon'], React.ComponentType<{ className?: string }>> = {
+  dashboard: LayoutDashboard,
   overview: LayoutDashboard,
   identity: BadgeCheck,
   incidents: ShieldAlert,
@@ -31,6 +33,7 @@ const NAV_ICONS: Record<NavItem['icon'], React.ComponentType<{ className?: strin
   intelligence: Radar,
   reports: FileBarChart2,
   privacy: Lock,
+  settings: Settings,
 };
 
 export interface SidebarNavProps {
@@ -72,7 +75,9 @@ function SidebarContent({
                 const isActive =
                   item.href === '/'
                     ? pathname === '/'
-                    : pathname.startsWith(item.href);
+                    : item.href === '/dashboard'
+                      ? pathname === '/dashboard'
+                      : pathname === item.href || pathname.startsWith(`${item.href}/`);
 
                 return (
                   <li key={item.id}>
@@ -85,16 +90,16 @@ function SidebarContent({
                       }}
                       aria-current={isActive ? 'page' : undefined}
                       className={cn(
-                        'group flex items-center justify-between gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                        'group relative flex items-center justify-between gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-all duration-150',
                         isActive
-                          ? 'bg-[var(--sidebar-accent)] text-white shadow-2xs ring-1 ring-slate-700/70'
+                          ? 'bg-slate-800 text-white font-semibold shadow-xs ring-1 ring-slate-700/80 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-1 before:rounded-r before:bg-emerald-400'
                           : 'text-slate-300 hover:bg-slate-800/60 hover:text-white',
                       )}
                     >
                       <span className="flex min-w-0 items-center gap-2.5">
                         <Icon
                           className={cn(
-                            'h-4 w-4 shrink-0',
+                            'h-4 w-4 shrink-0 transition-colors',
                             isActive
                               ? 'text-emerald-400'
                               : 'text-slate-400 group-hover:text-slate-200',

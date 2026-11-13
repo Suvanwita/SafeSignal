@@ -230,6 +230,10 @@ export function NewReportForm({ user, incidents }: NewReportFormProps) {
       title="Submit Abuse Report"
       subtitle="Document cyberbullying, harassment, threats, stalking, impersonation, or privacy violations"
       user={user}
+      breadcrumbs={[
+        { label: 'Abuse Reporting', href: '/abuse' },
+        { label: 'Submit Report' },
+      ]}
       topBarActions={
         <Link
           href="/abuse"

@@ -10,6 +10,7 @@ const PROTECTED_PREFIXES = [
   '/intelligence',
   '/reports',
   '/privacy',
+  '/settings',
 ];
 
 export function proxy(request: NextRequest) {
@@ -41,5 +42,6 @@ export const config = {
     '/intelligence/:path*',
     '/reports/:path*',
     '/privacy/:path*',
+    '/settings/:path*',
   ],
 };

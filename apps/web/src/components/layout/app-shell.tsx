@@ -4,6 +4,7 @@ import * as React from 'react';
 import { LogoutButton } from '@/components/auth/logout-button';
 import { notify } from '@/components/ui/toaster';
 import type { AuthUser } from '@/lib/auth/types';
+import { Breadcrumbs, type BreadcrumbItem } from './breadcrumbs';
 import { SidebarNav } from './sidebar-nav';
 import { TopNav } from './top-nav';
 
@@ -12,6 +13,7 @@ export interface AppShellProps {
   subtitle?: string;
   alertCount?: number;
   user?: AuthUser;
+  breadcrumbs?: BreadcrumbItem[];
   topBarActions?: React.ReactNode;
   children: React.ReactNode;
 }
@@ -21,6 +23,7 @@ export function AppShell({
   subtitle,
   alertCount = 0,
   user,
+  breadcrumbs,
   topBarActions,
   children,
 }: AppShellProps) {
@@ -48,22 +51,6 @@ export function AppShell({
       <SidebarNav
         mobileOpen={mobileOpen}
         onMobileOpenChange={setMobileOpen}
-        onNavigate={(item) => {
-          if (
-            item.href !== '/dashboard' &&
-            item.href !== '/incidents' &&
-            item.href !== '/identity' &&
-            item.href !== '/intelligence' &&
-            item.href !== '/abuse' &&
-            item.href !== '/evidence' &&
-            item.href !== '/'
-          ) {
-            notify.info(
-              `${item.label} module`,
-              'Module route scaffolding will be connected in upcoming milestones.',
-            );
-          }
-        }}
       />
 
       <div className="flex min-h-screen flex-col lg:pl-64">
@@ -84,7 +71,10 @@ export function AppShell({
         />
 
         <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto max-w-7xl space-y-6">{children}</div>
+          <div className="mx-auto max-w-7xl space-y-6">
+            <Breadcrumbs items={breadcrumbs} />
+            {children}
+          </div>
         </main>
       </div>
     </div>

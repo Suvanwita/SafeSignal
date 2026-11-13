@@ -165,6 +165,10 @@ export function IncidentCreateView({
       title="Create Safety Incident"
       subtitle="Initialize an authoritative safety case unifying abuse reports, evidence captures, and threat tracking."
       user={user}
+      breadcrumbs={[
+        { label: 'Incident Management', href: '/incidents' },
+        { label: 'New Incident Case' },
+      ]}
       topBarActions={
         <Button asChild variant="outline" size="sm">
           <Link href="/incidents">

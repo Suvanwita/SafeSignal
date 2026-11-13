@@ -8,14 +8,16 @@ export interface NavItem {
   label: string;
   href: string;
   icon:
+    | 'dashboard'
     | 'overview'
     | 'identity'
-    | 'incidents'
     | 'abuse'
     | 'evidence'
+    | 'privacy'
+    | 'incidents'
     | 'intelligence'
-    | 'reports'
-    | 'privacy';
+    | 'settings'
+    | 'reports';
   badge?: {
     text: string;
     tone: NavBadgeTone;
@@ -31,50 +33,64 @@ export const SIDEBAR_NAVIGATION: NavSection[] = [
   {
     title: 'Command Center',
     items: [
-      { id: 'overview', label: 'Overview', href: '/dashboard', icon: 'overview' },
       {
-        id: 'incidents',
-        label: 'Incidents',
-        href: '/incidents',
-        icon: 'incidents',
-        badge: { text: 'Alert', tone: 'alert' },
-      },
-      {
-        id: 'intelligence',
-        label: 'Intelligence',
-        href: '/intelligence',
-        icon: 'intelligence',
+        id: 'dashboard',
+        label: 'Dashboard',
+        href: '/dashboard',
+        icon: 'dashboard',
       },
     ],
   },
   {
-    title: 'Protection & Custody',
+    title: 'Protection & Response',
     items: [
       {
         id: 'identity',
-        label: 'Identity',
+        label: 'Identity Protection',
         href: '/identity',
         icon: 'identity',
-        badge: { text: 'Declared', tone: 'neutral' },
       },
-      { id: 'abuse', label: 'Abuse Reports', href: '/abuse', icon: 'abuse' },
+      {
+        id: 'abuse',
+        label: 'Abuse Reporting',
+        href: '/abuse',
+        icon: 'abuse',
+      },
       {
         id: 'evidence',
         label: 'Evidence Vault',
         href: '/evidence',
         icon: 'evidence',
       },
+      {
+        id: 'privacy',
+        label: 'Privacy Protection',
+        href: '/privacy',
+        icon: 'privacy',
+      },
+      {
+        id: 'incidents',
+        label: 'Incident Management',
+        href: '/incidents',
+        icon: 'incidents',
+        badge: { text: 'Active', tone: 'alert' },
+      },
+      {
+        id: 'intelligence',
+        label: 'Safety Intelligence',
+        href: '/intelligence',
+        icon: 'intelligence',
+      },
     ],
   },
   {
-    title: 'Governance',
+    title: 'Preferences',
     items: [
-      { id: 'reports', label: 'Reports', href: '/reports', icon: 'reports' },
       {
-        id: 'privacy',
-        label: 'Privacy & Access',
-        href: '/privacy',
-        icon: 'privacy',
+        id: 'settings',
+        label: 'Settings',
+        href: '/settings',
+        icon: 'settings',
       },
     ],
   },

@@ -335,6 +335,10 @@ export function AbuseDetailView({
       title={report.title}
       subtitle={`${ABUSE_CATEGORY_LABEL_MAP[report.category] ?? report.category} · ${PLATFORM_LABEL_MAP[report.platform] ?? report.platform}`}
       user={user}
+      breadcrumbs={[
+        { label: 'Abuse Reporting', href: '/abuse' },
+        { label: report.title },
+      ]}
       topBarActions={
         <div className="flex items-center gap-2">
           <Link
