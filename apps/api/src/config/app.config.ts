@@ -7,6 +7,7 @@ export interface AppConfig {
   corsOrigins: string[];
   storagePath: string;
   swaggerEnabled: boolean;
+  evidenceEncryptionKey: string;
 }
 
 export default registerAs(
@@ -21,5 +22,6 @@ export default registerAs(
       .filter(Boolean),
     storagePath: process.env.STORAGE_PATH ?? './storage',
     swaggerEnabled: (process.env.SWAGGER_ENABLED ?? 'true') !== 'false',
+    evidenceEncryptionKey: process.env.EVIDENCE_ENCRYPTION_KEY ?? '',
   }),
 );

@@ -7,7 +7,7 @@ import { AbuseCategory, Severity } from '@prisma/client';
 import { PDFDocument } from 'pdf-lib';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
-import { createGlobalValidationPipe } from '../src/common';
+import { createGlobalValidationPipe, EncryptionService } from '../src/common';
 import { AuthService } from '../src/modules/auth/auth.service';
 import { VaultStorageService } from '../src/modules/evidence/vault-storage.service';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -22,6 +22,7 @@ describe('Evidence Vault Integration (/api/v1/evidence)', () => {
   let prisma: PrismaService;
   let authService: AuthService;
   let vaultStorage: VaultStorageService;
+  let encryptionService: EncryptionService;
   const createdUserIds: string[] = [];
 
   async function createConfiguredApp(): Promise<INestApplication> {
@@ -41,6 +42,7 @@ describe('Evidence Vault Integration (/api/v1/evidence)', () => {
     prisma = app.get(PrismaService);
     authService = app.get(AuthService);
     vaultStorage = app.get(VaultStorageService);
+    encryptionService = app.get(EncryptionService);
   });
 
   afterEach(async () => {
@@ -143,7 +145,10 @@ describe('Evidence Vault Integration (/api/v1/evidence)', () => {
     expect(dbPng.storageKey).toContain(incidentId);
     const absolutePath = vaultStorage.resolveAndValidatePath(dbPng.storageKey!);
     expect(fs.existsSync(absolutePath)).toBe(true);
-    expect(fs.readFileSync(absolutePath)).toEqual(pngBuffer);
+    const rawVaultBytes = fs.readFileSync(absolutePath);
+    expect(rawVaultBytes).not.toEqual(pngBuffer); // Encrypted at rest
+    expect(encryptionService.isVaultEncrypted(rawVaultBytes)).toBe(true);
+    expect(encryptionService.decryptBuffer(rawVaultBytes)).toEqual(pngBuffer);
 
     // 2. Upload JPG evidence
     const jpgBuffer = Buffer.concat([
@@ -944,6 +949,424 @@ describe('Evidence Vault Integration (/api/v1/evidence)', () => {
       expect(meta.exif?.hasRedactedGps ?? false).toBe(false);
       expect(JSON.stringify(meta)).not.toContain('GPSLatitude');
       expect(JSON.stringify(meta)).not.toContain('GPSLongitude');
+    });
+  });
+
+  describe('Hardened Evidence Access & Privacy Controls', () => {
+    it('enforces owner-only downloads: non-owners cannot download evidence directly (403 Forbidden IDOR prevention)', async () => {
+      const owner = await registerUser('alice-owner');
+      const intruder = await registerUser('mallory-intruder');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Owner-Only Custody Incident',
+          category: AbuseCategory.HARASSMENT,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+
+      const buffer = Buffer.from('Private chat log content #101', 'utf-8');
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', buffer, 'private-chat.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // Intruder attempts to download Alice evidence via Bearer token -> 403 Forbidden
+      await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download`)
+        .set('Authorization', `Bearer ${intruder.accessToken}`)
+        .expect(403);
+
+      // Intruder attempts to request download token for Alice evidence -> 403 Forbidden
+      await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/download-token`)
+        .set('Authorization', `Bearer ${intruder.accessToken}`)
+        .expect(403);
+    });
+
+    it('issues short-lived, single-purpose download authorization token and enables secure download', async () => {
+      const owner = await registerUser('token-download-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Download Token Incident',
+          category: AbuseCategory.CYBERBULLYING,
+          severity: Severity.MEDIUM,
+        })
+        .expect(201);
+
+      const content = 'Confidential extortion audio transcript text.';
+      const buffer = Buffer.from(content, 'utf-8');
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', buffer, 'transcript.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // 1. Request short-lived single-purpose token
+      const tokenRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/download-token`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(201);
+
+      expect(tokenRes.body.data.token).toBeDefined();
+      expect(tokenRes.body.data.expiresInSeconds).toBe(60);
+      expect(tokenRes.body.data.evidenceId).toBe(evidenceId);
+      expect(tokenRes.body.data.downloadUrl).toContain(encodeURIComponent(tokenRes.body.data.token));
+
+      const downloadToken = tokenRes.body.data.token;
+
+      // 2. Perform download using short-lived token via query param (without Bearer header!)
+      const downloadRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download?token=${encodeURIComponent(downloadToken)}`)
+        .expect(200);
+
+      expect(downloadRes.text).toBe(content);
+      expect(downloadRes.headers['content-type']).toContain('text/plain');
+    });
+
+    it('rejects expired download authorization tokens with 401 Unauthorized', async () => {
+      const owner = await registerUser('expired-token-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Expired Token Test',
+          category: AbuseCategory.DOXXING,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', Buffer.from('Sensitive doxxing records', 'utf-8'), 'doxx.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // Create artificially expired token using encryptionService
+      const expiredToken = encryptionService.encryptDownloadToken({
+        evidenceId,
+        userId: owner.userId,
+        jti: randomUUID(),
+        exp: Date.now() - 5000, // expired 5 seconds ago
+        purpose: 'EVIDENCE_DOWNLOAD',
+      });
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download?token=${encodeURIComponent(expiredToken)}`)
+        .expect(401);
+
+      expect(res.body.error.code).toBe('DOWNLOAD_TOKEN_EXPIRED');
+    });
+
+    it('rejects forged or corrupted download authorization tokens with 401 Unauthorized', async () => {
+      const owner = await registerUser('tampered-token-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Tampered Token Incident',
+          category: AbuseCategory.THREATS,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', Buffer.from('Evidence text', 'utf-8'), 'threat.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      const tokenRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/download-token`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(201);
+
+      const validToken = tokenRes.body.data.token;
+      // Corrupt the token characters
+      const tamperedToken =
+        validToken.slice(0, 15) +
+        (validToken[15] === 'A' ? 'B' : 'A') +
+        validToken.slice(16);
+
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download?token=${encodeURIComponent(tamperedToken)}`)
+        .expect(401);
+
+      expect(res.body.error.code).toBe('INVALID_DOWNLOAD_TOKEN');
+    });
+
+    it('prevents IDOR: rejects download token issued for evidence A when used to download evidence B (403 Forbidden)', async () => {
+      const owner = await registerUser('token-idor-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'IDOR Prevention Incident',
+          category: AbuseCategory.HARASSMENT,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+
+      // Evidence A
+      const uploadA = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', Buffer.from('File A content', 'utf-8'), 'fileA.txt')
+        .expect(201);
+      const evidenceA = uploadA.body.data.id;
+
+      // Evidence B
+      const uploadB = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', Buffer.from('File B content', 'utf-8'), 'fileB.txt')
+        .expect(201);
+      const evidenceB = uploadB.body.data.id;
+
+      // Token issued for Evidence A
+      const tokenRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceA}/download-token`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(201);
+      const tokenA = tokenRes.body.data.token;
+
+      // Attempt to download Evidence B using Token A -> 403 Forbidden (mismatch)
+      const res = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceB}/download?token=${encodeURIComponent(tokenA)}`)
+        .expect(403);
+
+      expect(res.body.error.code).toBe('DOWNLOAD_TOKEN_MISMATCH');
+    });
+
+    it('prevents token replay: rejects already-consumed single-purpose download tokens with 401 Unauthorized', async () => {
+      const owner = await registerUser('replay-prevention-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Replay Prevention Incident',
+          category: AbuseCategory.STALKING,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', Buffer.from('Single-use file bytes', 'utf-8'), 'single.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      const tokenRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/download-token`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(201);
+      const token = tokenRes.body.data.token;
+
+      // First download succeeds
+      await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download?token=${encodeURIComponent(token)}`)
+        .expect(200);
+
+      // Replay attempt must be rejected with 401 DOWNLOAD_TOKEN_ALREADY_USED
+      const replayRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download?token=${encodeURIComponent(token)}`)
+        .expect(401);
+
+      expect(replayRes.body.error.code).toBe('DOWNLOAD_TOKEN_ALREADY_USED');
+    });
+
+    it('persists audit records for upload, token issuance, download, and verification in evidence_audit_logs', async () => {
+      const owner = await registerUser('audit-trail-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Forensic Audit Incident',
+          category: AbuseCategory.UNWANTED_CONTACT,
+          severity: Severity.MEDIUM,
+        })
+        .expect(201);
+
+      // 1. Upload
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', Buffer.from('Forensic audit record test', 'utf-8'), 'audit.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // 2. Token Issuance
+      const tokenRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/download-token`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(201);
+
+      // 3. Download via token
+      await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download?token=${encodeURIComponent(tokenRes.body.data.token)}`)
+        .expect(200);
+
+      // 4. Verify integrity
+      await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/verify`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+
+      // 5. Query audit logs via GET /api/v1/evidence/:id/audit
+      const auditRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/audit`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+
+      const logs = auditRes.body.data;
+      expect(Array.isArray(logs)).toBe(true);
+      const actions = logs.map((l: { action: string }) => l.action);
+      expect(actions).toContain('UPLOAD');
+      expect(actions).toContain('TOKEN_ISSUED');
+      expect(actions).toContain('DOWNLOAD');
+      expect(actions).toContain('VERIFY');
+
+      // Check timeline events also recorded
+      const timelineRes = await request(app.getHttpServer())
+        .get(`/api/v1/incidents/${incRes.body.data.id}`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+      const eventTypes = timelineRes.body.data.timelineEvents.map((e: { eventType: string }) => e.eventType);
+      expect(eventTypes).toContain('EVIDENCE_ATTACHED');
+      expect(eventTypes).toContain('EVIDENCE_DOWNLOADED');
+      expect(eventTypes).toContain('EVIDENCE_VERIFIED');
+    });
+
+    it('detects corrupted encrypted vault data: authenticated decryption fails safely without leaking internals', async () => {
+      const owner = await registerUser('corrupted-encrypted-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Corrupted Ciphertext Incident',
+          category: AbuseCategory.EXTORTION,
+          severity: Severity.CRITICAL,
+        })
+        .expect(201);
+
+      const originalBytes = Buffer.from('Original confidential extortion communication', 'utf-8');
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', originalBytes, 'extortion.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // Locate physical file on disk (which is encrypted with AES-256-GCM)
+      const dbRecord = await prisma.evidence.findUniqueOrThrow({
+        where: { id: evidenceId },
+      });
+      const absolutePath = vaultStorage.resolveAndValidatePath(dbRecord.storageKey!);
+
+      // Tamper with the encrypted ciphertext bytes on disk (keep SSENC01 prefix and IV, but corrupt ciphertext)
+      const diskBytes = fs.readFileSync(absolutePath);
+      expect(diskBytes.subarray(0, 7).toString('ascii')).toBe('SSENC01');
+      const corruptedBytes = Buffer.from(diskBytes);
+      corruptedBytes[corruptedBytes.length - 1] ^= 0x55; // flip byte in ciphertext
+      fs.writeFileSync(absolutePath, corruptedBytes);
+
+      // Attempt download: must fail authenticated decryption safely with 400 EVIDENCE_FILE_CORRUPTED
+      const downloadRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/download`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(400);
+
+      expect(downloadRes.body.error.code).toBe('EVIDENCE_FILE_CORRUPTED');
+      expect(downloadRes.body.error.message).toContain('cryptographic authentication');
+
+      // Attempt verify: must catch authenticated decryption failure and return INTEGRITY_MISMATCH
+      const verifyRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/verify`)
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .expect(200);
+
+      expect(verifyRes.body.data.status).toBe('INTEGRITY_MISMATCH');
+      expect(verifyRes.body.data.verified).toBe(false);
+    });
+
+    it('verifies AES-256-GCM encryption generates unique nonces across identical file uploads', async () => {
+      const owner = await registerUser('nonce-uniqueness-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .send({
+          title: 'Nonce Uniqueness Incident',
+          category: AbuseCategory.HARASSMENT,
+          severity: Severity.LOW,
+        })
+        .expect(201);
+
+      const sampleBytes = Buffer.from('IDENTICAL_PLAINTEXT_BYTES_ACROSS_UPLOADS', 'utf-8');
+
+      // Upload 1
+      const upload1 = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', sampleBytes, 'file1.txt')
+        .expect(201);
+
+      // Upload 2
+      const upload2 = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${owner.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', sampleBytes, 'file2.txt')
+        .expect(201);
+
+      const db1 = await prisma.evidence.findUniqueOrThrow({ where: { id: upload1.body.data.id } });
+      const db2 = await prisma.evidence.findUniqueOrThrow({ where: { id: upload2.body.data.id } });
+
+      const file1Bytes = fs.readFileSync(vaultStorage.resolveAndValidatePath(db1.storageKey!));
+      const file2Bytes = fs.readFileSync(vaultStorage.resolveAndValidatePath(db2.storageKey!));
+
+      // Both must start with SSENC01
+      expect(file1Bytes.subarray(0, 7).toString('ascii')).toBe('SSENC01');
+      expect(file2Bytes.subarray(0, 7).toString('ascii')).toBe('SSENC01');
+
+      // Nonces (bytes 7..19) must be completely unique
+      const nonce1 = file1Bytes.subarray(7, 19);
+      const nonce2 = file2Bytes.subarray(7, 19);
+      expect(nonce1.equals(nonce2)).toBe(false);
+
+      // Ciphertexts must differ
+      expect(file1Bytes.equals(file2Bytes)).toBe(false);
+
+      // Both decrypt back to identical original bytes
+      expect(encryptionService.decryptBuffer(file1Bytes)).toEqual(sampleBytes);
+      expect(encryptionService.decryptBuffer(file2Bytes)).toEqual(sampleBytes);
     });
   });
 });

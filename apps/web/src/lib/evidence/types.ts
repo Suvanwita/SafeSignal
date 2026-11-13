@@ -132,6 +132,26 @@ export interface VerifyEvidenceResult {
   disclaimer: string;
 }
 
+export interface DownloadTokenResponse {
+  token: string;
+  expiresAt: string;
+  expiresInSeconds: number;
+  evidenceId: string;
+  downloadUrl: string;
+}
+
+export interface EvidenceAuditLog {
+  id: string;
+  userId: string;
+  evidenceId: string;
+  action: string;
+  status: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  details?: unknown;
+  createdAt: string;
+}
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || Number.isNaN(bytes)) {
     return '—';

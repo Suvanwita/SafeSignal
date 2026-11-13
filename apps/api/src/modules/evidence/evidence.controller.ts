@@ -11,8 +11,10 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Res,
   StreamableFile,
+  UnauthorizedException,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -30,9 +32,12 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import type { Response as ExpressResponse } from 'express';
-import { CurrentUser, SkipResponseTransform } from '../../common';
+import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
+import { CurrentUser, Public, SkipResponseTransform } from '../../common';
+import { AuthService } from '../auth/auth.service';
 import { CreateEvidenceDto } from './dto/create-evidence.dto';
+import { DownloadTokenResponseDto } from './dto/download-token-response.dto';
+import { EvidenceAuditLogResponseDto } from './dto/evidence-audit-log-response.dto';
 import {
   DeleteEvidenceResponseDto,
   EvidenceResponseDto,
@@ -48,7 +53,10 @@ import { MAX_EVIDENCE_FILE_SIZE_BYTES } from './vault-file-validator';
 @ApiBearerAuth('bearer')
 @Controller('evidence')
 export class EvidenceController {
-  constructor(private readonly evidenceService: EvidenceService) {}
+  constructor(
+    private readonly evidenceService: EvidenceService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Get()
   @ApiOperation({ summary: 'List evidence records owned by current user' })
@@ -94,11 +102,39 @@ export class EvidenceController {
     return this.evidenceService.getMetadataForUser(userId, id);
   }
 
+  @Post(':id/download-token')
+  @ApiOperation({
+    summary:
+      'Request a short-lived, single-purpose download authorization token for an evidence file',
+    description:
+      'Issues a single-use AES-256-GCM encrypted authorization token valid for 60 seconds. Restricts access strictly to the authenticated owner and protects against token replay and IDOR attempts.',
+  })
+  @ApiOkResponse({
+    type: DownloadTokenResponseDto,
+    description: 'Short-lived download token with direct download URL',
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({ description: 'Evidence record not found' })
+  generateDownloadToken(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Req() req: ExpressRequest,
+  ): Promise<DownloadTokenResponseDto> {
+    return this.evidenceService.generateDownloadToken(
+      userId,
+      id,
+      req.ip,
+      req.headers['user-agent'] as string | undefined,
+    );
+  }
+
   @Get(':id/download')
+  @Public()
   @SkipResponseTransform()
   @ApiOperation({
     summary:
-      'Download the raw evidence file securely from the private evidence vault',
+      'Download raw evidence file from the vault (requires authenticated owner Bearer token OR valid short-lived download token)',
   })
   @ApiProduces(
     'image/png',
@@ -108,16 +144,49 @@ export class EvidenceController {
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   )
   @ApiOkResponse({ description: 'Raw binary evidence file stream' })
-  @ApiUnauthorizedResponse({ description: 'Authentication required' })
-  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required or invalid/expired token' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed or token mismatch' })
   @ApiNotFoundResponse({ description: 'Evidence record or file not found' })
   async download(
-    @CurrentUser('id') userId: string,
     @Param('id', ParseUUIDPipe) id: string,
+    @Query('token') downloadToken: string | undefined,
+    @Req() req: ExpressRequest,
     @Res({ passthrough: true }) res: ExpressResponse,
   ): Promise<StreamableFile> {
+    let authorizedUserId: string;
+    let method: 'BEARER_AUTH' | 'TOKEN_AUTH';
+
+    if (downloadToken && downloadToken.trim().length > 0) {
+      // Validate short-lived single-purpose token
+      const result = await this.evidenceService.validateAndConsumeDownloadToken(
+        downloadToken.trim(),
+        id,
+        req.ip,
+        req.headers['user-agent'] as string | undefined,
+      );
+      authorizedUserId = result.userId;
+      method = 'TOKEN_AUTH';
+    } else {
+      // Authenticate via Bearer header
+      const bearerToken = this.extractBearerToken(req);
+      if (!bearerToken) {
+        throw new UnauthorizedException({
+          code: 'UNAUTHORIZED',
+          message:
+            'Authentication required: provide Bearer authorization header or valid download token.',
+        });
+      }
+      const { user } = await this.authService.validateAccessToken(bearerToken);
+      authorizedUserId = user.id;
+      method = 'BEARER_AUTH';
+    }
+
     const { stream, filename, mimeType, size } =
-      await this.evidenceService.getFileStreamForUser(userId, id);
+      await this.evidenceService.getFileStreamForUser(authorizedUserId, id, {
+        method,
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'] as string | undefined,
+      });
 
     res.set({
       'Content-Type': mimeType,
@@ -128,6 +197,41 @@ export class EvidenceController {
     });
 
     return new StreamableFile(stream);
+  }
+
+  @Get(':id/audit')
+  @ApiOperation({
+    summary:
+      'Get chronological audit records for an evidence file (restricted to owner)',
+    description:
+      'Returns complete audit records for uploads, downloads, verifications, and token issuances for this evidence record.',
+  })
+  @ApiOkResponse({
+    type: [EvidenceAuditLogResponseDto],
+    description: 'List of audit records for the evidence item',
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({ description: 'Evidence record not found' })
+  getAuditLogs(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<EvidenceAuditLogResponseDto[]> {
+    return this.evidenceService.getAuditLogsForUser(userId, id);
+  }
+
+  private extractBearerToken(req: ExpressRequest): string | null {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return null;
+    const parts = authHeader.trim().split(/\s+/);
+    if (
+      parts.length !== 2 ||
+      parts[0]?.toLowerCase() !== 'bearer' ||
+      !parts[1]
+    ) {
+      return null;
+    }
+    return parts[1];
   }
 
   @Post(':id/verify')

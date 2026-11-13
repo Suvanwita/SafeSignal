@@ -7,8 +7,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const tokenParam = request.nextUrl.searchParams.get('token');
   const accessToken = request.cookies.get(ACCESS_TOKEN_COOKIE)?.value;
-  if (!accessToken) {
+
+  if (!accessToken && !tokenParam) {
     return NextResponse.json(
       {
         success: false,
@@ -19,16 +21,23 @@ export async function GET(
   }
 
   try {
-    const backendResponse = await fetch(
+    const backendUrl = new URL(
       `${getBackendApiBaseUrl()}/api/v1/evidence/${encodeURIComponent(id)}/download`,
-      {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-        cache: 'no-store',
-      },
     );
+    if (tokenParam) {
+      backendUrl.searchParams.set('token', tokenParam);
+    }
+
+    const reqHeaders: Record<string, string> = {};
+    if (accessToken) {
+      reqHeaders['Authorization'] = `Bearer ${accessToken}`;
+    }
+
+    const backendResponse = await fetch(backendUrl.toString(), {
+      method: 'GET',
+      headers: reqHeaders,
+      cache: 'no-store',
+    });
 
     if (!backendResponse.ok) {
       const err = await backendResponse.json().catch(() => null);
@@ -44,19 +53,19 @@ export async function GET(
       );
     }
 
-    const headers = new Headers();
+    const responseHeaders = new Headers();
     const contentType = backendResponse.headers.get('content-type');
     const contentDisposition = backendResponse.headers.get('content-disposition');
     const contentLength = backendResponse.headers.get('content-length');
 
-    if (contentType) headers.set('content-type', contentType);
-    if (contentDisposition) headers.set('content-disposition', contentDisposition);
-    if (contentLength) headers.set('content-length', contentLength);
-    headers.set('x-content-type-options', 'nosniff');
+    if (contentType) responseHeaders.set('content-type', contentType);
+    if (contentDisposition) responseHeaders.set('content-disposition', contentDisposition);
+    if (contentLength) responseHeaders.set('content-length', contentLength);
+    responseHeaders.set('x-content-type-options', 'nosniff');
 
     return new NextResponse(backendResponse.body, {
       status: 200,
-      headers,
+      headers: responseHeaders,
     });
   } catch {
     return NextResponse.json(

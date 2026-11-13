@@ -3,10 +3,46 @@
 import { AuthApiError, ensureCsrfToken } from '@/lib/auth/client-api';
 import {
   formatBytes,
+  type DownloadTokenResponse,
+  type EvidenceAuditLog,
   type EvidenceRecord,
   type UploadEvidenceInput,
   type VerifyEvidenceResult,
 } from './types';
+
+async function requestBff<T>(
+  url: string,
+  options: RequestInit & { requireCsrf?: boolean } = {},
+): Promise<T> {
+  const headers = new Headers(options.headers || {});
+  headers.set('Accept', 'application/json');
+
+  if (options.requireCsrf) {
+    const csrfToken = await ensureCsrfToken();
+    headers.set('x-csrf-token', csrfToken);
+  }
+
+  const res = await fetch(url, {
+    ...options,
+    headers,
+  });
+
+  const payload = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    const errorCode =
+      payload && typeof payload === 'object' && 'error' in payload
+        ? (payload.error?.code ?? 'REQUEST_FAILED')
+        : 'REQUEST_FAILED';
+    const message =
+      payload && typeof payload === 'object' && 'error' in payload
+        ? (payload.error?.message ?? 'Request failed')
+        : 'Request failed';
+    throw new AuthApiError(errorCode, message, res.status);
+  }
+
+  return payload as T;
+}
 
 export type UploadProgressCallback = (percent: number, message: string) => void;
 
@@ -213,4 +249,28 @@ export async function fetchEvidenceMetadata(
 
   const payload = await res.json();
   return payload.data ?? null;
+}
+
+export async function requestEvidenceDownloadToken(
+  id: string,
+): Promise<DownloadTokenResponse> {
+  return requestBff<DownloadTokenResponse>(
+    `/api/evidence/${encodeURIComponent(id)}/download-token`,
+    {
+      method: 'POST',
+      requireCsrf: true,
+    },
+  );
+}
+
+export async function fetchEvidenceAuditLogs(
+  id: string,
+): Promise<EvidenceAuditLog[]> {
+  const res = await requestBff<EvidenceAuditLog[]>(
+    `/api/evidence/${encodeURIComponent(id)}/audit`,
+    {
+      method: 'GET',
+    },
+  );
+  return res ?? [];
 }

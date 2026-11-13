@@ -3,6 +3,7 @@ export * from './auth/current-session.decorator';
 export * from './auth/current-user.decorator';
 export * from './auth/jwt-auth.guard';
 export * from './auth/public.decorator';
+export * from './crypto/encryption.service';
 export * from './filters/all-exceptions.filter';
 export * from './interceptors/transform-response.interceptor';
 export * from './logging/app-logger.service';

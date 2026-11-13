@@ -19,15 +19,20 @@ import {
   FileText,
   HardDrive,
   Hash,
+  History,
   Image as ImageIcon,
   Info,
+  Key,
   Layers,
   Link2,
   Loader2,
   Lock,
   Maximize2,
+  RefreshCw,
+  Shield,
   ShieldAlert,
   ShieldCheck,
+  Timer,
   Trash2,
 } from 'lucide-react';
 import { AppShell } from '@/components/layout/app-shell';
@@ -45,12 +50,16 @@ import { notify } from '@/components/ui/toaster';
 import type { AuthUser } from '@/lib/auth/types';
 import {
   deleteEvidence,
+  fetchEvidenceAuditLogs,
+  requestEvidenceDownloadToken,
   verifyEvidence,
 } from '@/lib/evidence/client-evidence';
 import {
   EVIDENCE_INTEGRITY_DISCLAIMER,
   formatBytes,
   getFileFormatCategory,
+  type DownloadTokenResponse,
+  type EvidenceAuditLog,
   type EvidenceRecord,
   type VerifyEvidenceResult,
 } from '@/lib/evidence/types';
@@ -103,6 +112,61 @@ export function EvidenceDetailView({
   const [copiedJson, setCopiedJson] = React.useState<boolean>(false);
   const [isJsonExpanded, setIsJsonExpanded] = React.useState<boolean>(false);
 
+  const [auditLogs, setAuditLogs] = React.useState<EvidenceAuditLog[]>([]);
+  const [isLoadingAudit, setIsLoadingAudit] = React.useState<boolean>(false);
+  const [downloadToken, setDownloadToken] =
+    React.useState<DownloadTokenResponse | null>(null);
+  const [isGeneratingToken, setIsGeneratingToken] =
+    React.useState<boolean>(false);
+  const [copiedToken, setCopiedToken] = React.useState<boolean>(false);
+
+  const loadAuditLogs = React.useCallback(async () => {
+    setIsLoadingAudit(true);
+    try {
+      const logs = await fetchEvidenceAuditLogs(evidence.id);
+      setAuditLogs(logs);
+    } catch {
+      // non-fatal
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  }, [evidence.id]);
+
+  React.useEffect(() => {
+    loadAuditLogs();
+  }, [loadAuditLogs]);
+
+  const handleGenerateDownloadToken = async () => {
+    setIsGeneratingToken(true);
+    try {
+      const res = await requestEvidenceDownloadToken(evidence.id);
+      setDownloadToken(res);
+      notify.verified('Single-use download token issued (valid 60 seconds).');
+      loadAuditLogs();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Failed to issue download token.';
+      notify.alert(msg);
+    } finally {
+      setIsGeneratingToken(false);
+    }
+  };
+
+  const handleCopyTokenUrl = async () => {
+    if (!downloadToken) return;
+    try {
+      const fullUrl = `${window.location.origin}${downloadToken.downloadUrl}`;
+      await navigator.clipboard.writeText(fullUrl);
+      setCopiedToken(true);
+      notify.verified('Single-use download link copied to clipboard.');
+      setTimeout(() => setCopiedToken(false), 2000);
+    } catch {
+      notify.alert('Failed to copy single-use download link.');
+    }
+  };
+
   const format = getFileFormatCategory(evidence.fileName, evidence.mimeType);
   const meta = evidence.metadata;
   const isImage = format === 'PNG' || format === 'JPG';
@@ -141,6 +205,7 @@ export function EvidenceDetailView({
       const res = await verifyEvidence(evidence.id);
       setVerifyResult(res);
       setIsVerifyDialogOpen(true);
+      loadAuditLogs();
       if (res.status === 'VERIFIED') {
         notify.verified('Cryptographic integrity verified: File matches recorded hash.');
       } else {
@@ -157,6 +222,9 @@ export function EvidenceDetailView({
 
   const handleDownload = () => {
     window.location.href = `/api/evidence/${evidence.id}/download`;
+    setTimeout(() => {
+      loadAuditLogs();
+    }, 1500);
   };
 
   const handleDelete = async () => {
@@ -216,6 +284,20 @@ export function EvidenceDetailView({
             >
               <Download className="h-3.5 w-3.5" />
               <span>Download File</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleGenerateDownloadToken}
+              disabled={isGeneratingToken}
+              className="gap-1.5 text-xs font-semibold text-purple-700 hover:text-purple-800 hover:bg-purple-50 border-purple-200"
+            >
+              {isGeneratingToken ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Key className="h-3.5 w-3.5 text-purple-600" />
+              )}
+              <span>Single-Use Link</span>
             </Button>
             <Button
               variant="ghost"
@@ -857,6 +939,185 @@ export function EvidenceDetailView({
               </div>
             </CardContent>
           )}
+        </Card>
+
+        {/* VAULT SECURITY & AUDIT TRAIL */}
+        <Card className="border-slate-200 bg-white">
+          <CardHeader className="flex flex-row items-center justify-between pb-3">
+            <div>
+              <div className="flex items-center gap-2">
+                <Shield className="h-4 w-4 text-purple-600" />
+                <CardTitle className="text-base font-semibold text-slate-900">
+                  Vault Security & Chain-of-Custody Audit Trail
+                </CardTitle>
+              </div>
+              <CardDescription className="text-xs text-slate-500">
+                Authenticated AES-256-GCM encryption at rest, owner-restricted access control, and tamper-evident audit logging.
+              </CardDescription>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={loadAuditLogs}
+              disabled={isLoadingAudit}
+              className="h-8 gap-1.5 text-xs text-slate-700"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${isLoadingAudit ? 'animate-spin' : ''}`}
+              />
+              <span>Refresh Audit</span>
+            </Button>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* SECURITY CARDS GRID */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+                  <Lock className="h-3.5 w-3.5 text-blue-600" />
+                  <span>AES-256-GCM Encryption</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600 leading-relaxed">
+                  Encrypted on disk with unique 96-bit random nonces and 128-bit authentication tags. Zero plaintext storage.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                  <span>Owner-Only Authorization</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600 leading-relaxed">
+                  Enforces strict user ownership checks on all vault downloads and APIs, preventing IDOR vulnerabilities.
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-center gap-2 text-xs font-semibold text-slate-800">
+                  <Key className="h-3.5 w-3.5 text-purple-600" />
+                  <span>Single-Use Tokens</span>
+                </div>
+                <p className="mt-1 text-xs text-slate-600 leading-relaxed">
+                  Short-lived (60s TTL), replay-protected encrypted authorization tokens allow secure link distribution.
+                </p>
+              </div>
+            </div>
+
+            {/* SINGLE-USE TOKEN DISPLAY */}
+            {downloadToken && (
+              <div className="rounded-lg border border-purple-200 bg-purple-50/70 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-sm font-semibold text-purple-900">
+                    <Key className="h-4 w-4 text-purple-600" />
+                    <span>Active Single-Use Download Authorization</span>
+                  </div>
+                  <Badge variant="neutral" className="border-purple-300 bg-purple-100 text-purple-800 text-xs">
+                    Expires in {downloadToken.expiresInSeconds}s
+                  </Badge>
+                </div>
+                <p className="mt-1 text-xs text-purple-800">
+                  This token can be consumed exactly once. Any replay or tampering immediately invalidates authorization.
+                </p>
+                <div className="mt-3 flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={
+                      typeof window !== 'undefined'
+                        ? `${window.location.origin}${downloadToken.downloadUrl}`
+                        : downloadToken.downloadUrl
+                    }
+                    className="flex-1 rounded-md border border-purple-300 bg-white px-3 py-1.5 font-mono text-xs text-slate-800 focus:outline-none"
+                  />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCopyTokenUrl}
+                    className="gap-1.5 text-xs text-purple-800 border-purple-300 hover:bg-purple-100"
+                  >
+                    {copiedToken ? (
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                    ) : (
+                      <Copy className="h-3.5 w-3.5" />
+                    )}
+                    <span>{copiedToken ? 'Copied!' : 'Copy Link'}</span>
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* AUDIT LOG TABLE */}
+            <div>
+              <div className="flex items-center justify-between pb-2">
+                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                  Chain-of-Custody Event History ({auditLogs.length})
+                </h4>
+              </div>
+
+              {isLoadingAudit && auditLogs.length === 0 ? (
+                <div className="flex items-center justify-center py-6 text-xs text-slate-500">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Loading audit logs...
+                </div>
+              ) : auditLogs.length === 0 ? (
+                <p className="py-4 text-center text-xs text-slate-400 italic border rounded-lg border-slate-100">
+                  No access audit logs recorded yet.
+                </p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                      <tr>
+                        <th className="py-2.5 px-3 font-semibold">Timestamp</th>
+                        <th className="py-2.5 px-3 font-semibold">Action</th>
+                        <th className="py-2.5 px-3 font-semibold">Status</th>
+                        <th className="py-2.5 px-3 font-semibold">Client Source</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {auditLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-slate-50/50">
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-600">
+                            {formatDate(log.createdAt)}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <Badge
+                              variant="neutral"
+                              className={`text-[11px] font-semibold ${
+                                log.action === 'UPLOAD'
+                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                  : log.action === 'DOWNLOAD'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : log.action === 'VERIFY'
+                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                      : 'bg-purple-50 text-purple-700 border-purple-200'
+                              }`}
+                            >
+                              {log.action}
+                            </Badge>
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <Badge
+                              variant="neutral"
+                              className={`text-[11px] ${
+                                log.status === 'SUCCESS'
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200'
+                              }`}
+                            >
+                              {log.status}
+                            </Badge>
+                          </td>
+                          <td className="py-2.5 px-3 text-[11px] text-slate-500 truncate max-w-[200px]">
+                            {log.ipAddress || 'Internal Application'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </CardContent>
         </Card>
       </div>
 

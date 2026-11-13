@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { EvidenceService } from './evidence.service';
@@ -26,6 +27,10 @@ describe('EvidenceService', () => {
     timelineEvent: {
       create: jest.Mock;
     };
+    evidenceAuditLog: {
+      create: jest.Mock;
+      findMany: jest.Mock;
+    };
     $transaction: jest.Mock;
   };
 
@@ -35,6 +40,14 @@ describe('EvidenceService', () => {
     deleteFile: jest.Mock;
     getVaultRoot: jest.Mock;
     computeFileSha256: jest.Mock;
+  };
+
+  let encryptionService: {
+    encryptBuffer: jest.Mock;
+    decryptBuffer: jest.Mock;
+    isVaultEncrypted: jest.Mock;
+    encryptDownloadToken: jest.Mock;
+    decryptDownloadToken: jest.Mock;
   };
 
   const userId = '11111111-1111-1111-1111-111111111111';
@@ -107,6 +120,10 @@ describe('EvidenceService', () => {
         findUnique: jest.fn(),
       },
       timelineEvent: tx.timelineEvent,
+      evidenceAuditLog: {
+        create: jest.fn().mockResolvedValue({ id: 'audit-log-1' }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
       $transaction: jest.fn(async (cb: (txArg: typeof tx) => Promise<unknown>) =>
         cb(tx),
       ),
@@ -129,9 +146,24 @@ describe('EvidenceService', () => {
       }),
     };
 
+    encryptionService = {
+      encryptBuffer: jest.fn().mockImplementation((buf: Buffer) => buf),
+      decryptBuffer: jest.fn().mockImplementation((buf: Buffer) => buf),
+      isVaultEncrypted: jest.fn().mockReturnValue(true),
+      encryptDownloadToken: jest.fn().mockReturnValue('mock-encrypted-token'),
+      decryptDownloadToken: jest.fn().mockReturnValue({
+        evidenceId,
+        userId,
+        jti: 'mock-jti-uuid',
+        exp: Date.now() + 60_000,
+        purpose: 'EVIDENCE_DOWNLOAD',
+      }),
+    };
+
     service = new EvidenceService(
       prisma as unknown as PrismaService,
       vaultStorage as unknown as VaultStorageService,
+      encryptionService as unknown as any,
     );
   });
 
@@ -582,6 +614,176 @@ describe('EvidenceService', () => {
       await expect(
         service.getMetadataForUser(userId, evidenceId),
       ).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('Download Authorization Tokens (Short-Lived & Single-Purpose)', () => {
+    it('generates single-purpose AES-256-GCM download token for authenticated owner', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+
+      const result = await service.generateDownloadToken(userId, evidenceId);
+
+      expect(result).toBeDefined();
+      expect(result.token).toBe('mock-encrypted-token');
+      expect(result.evidenceId).toBe(evidenceId);
+      expect(result.expiresInSeconds).toBe(60);
+      expect(result.downloadUrl).toContain(encodeURIComponent('mock-encrypted-token'));
+
+      expect(encryptionService.encryptDownloadToken).toHaveBeenCalledWith(
+        expect.objectContaining({
+          evidenceId,
+          userId,
+          purpose: 'EVIDENCE_DOWNLOAD',
+        }),
+      );
+      expect(prisma.evidenceAuditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId,
+            evidenceId,
+            action: 'TOKEN_ISSUED',
+            status: 'SUCCESS',
+          }),
+        }),
+      );
+    });
+
+    it('rejects download token generation by non-owner with ForbiddenException', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce({
+        ...baseEvidence,
+        userId: otherUserId,
+      });
+
+      await expect(
+        service.generateDownloadToken(userId, evidenceId),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('validates and consumes valid download token', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+
+      const result = await service.validateAndConsumeDownloadToken(
+        'valid-token-str',
+        evidenceId,
+      );
+
+      expect(result.userId).toBe(userId);
+      expect(result.evidenceId).toBe(evidenceId);
+    });
+
+    it('rejects download token when evidence ID does not match (IDOR prevention)', async () => {
+      encryptionService.decryptDownloadToken.mockReturnValueOnce({
+        evidenceId: 'different-evidence-id',
+        userId,
+        jti: 'jti-1',
+        exp: Date.now() + 60_000,
+        purpose: 'EVIDENCE_DOWNLOAD',
+      });
+
+      await expect(
+        service.validateAndConsumeDownloadToken('valid-token-str', evidenceId),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('rejects expired download token with UnauthorizedException', async () => {
+      encryptionService.decryptDownloadToken.mockReturnValueOnce({
+        evidenceId,
+        userId,
+        jti: 'jti-expired',
+        exp: Date.now() - 5000, // expired 5 seconds ago
+        purpose: 'EVIDENCE_DOWNLOAD',
+      });
+
+      await expect(
+        service.validateAndConsumeDownloadToken('expired-token-str', evidenceId),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects already-consumed download token (single-use replay prevention)', async () => {
+      prisma.evidence.findUnique.mockResolvedValue(baseEvidence);
+      encryptionService.decryptDownloadToken.mockReturnValue({
+        evidenceId,
+        userId,
+        jti: 'single-use-jti-123',
+        exp: Date.now() + 60_000,
+        purpose: 'EVIDENCE_DOWNLOAD',
+      });
+
+      // First use succeeds
+      await service.validateAndConsumeDownloadToken('token-str', evidenceId);
+
+      // Replay attempt must fail
+      await expect(
+        service.validateAndConsumeDownloadToken('token-str', evidenceId),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('Evidence Audit Logging & Forensics', () => {
+    it('records audit log and timeline event upon file download', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+
+      await service.getFileStreamForUser(userId, evidenceId, {
+        method: 'BEARER_AUTH',
+        ipAddress: '192.168.1.50',
+        userAgent: 'SafeSignal-Agent/1.0',
+      });
+
+      expect(prisma.evidenceAuditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId,
+            evidenceId,
+            action: 'DOWNLOAD',
+            status: 'SUCCESS',
+            ipAddress: '192.168.1.50',
+          }),
+        }),
+      );
+
+      expect(prisma.timelineEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            userId,
+            incidentId: baseEvidence.incidentId,
+            eventType: 'EVIDENCE_DOWNLOADED',
+          }),
+        }),
+      );
+    });
+
+    it('returns chronological audit logs for evidence owner', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+      prisma.evidenceAuditLog.findMany.mockResolvedValueOnce([
+        {
+          id: 'log-1',
+          userId,
+          evidenceId,
+          action: 'DOWNLOAD',
+          status: 'SUCCESS',
+          ipAddress: '127.0.0.1',
+          userAgent: 'Mozilla/5.0',
+          details: { method: 'TOKEN_AUTH' },
+          createdAt: now,
+        },
+      ]);
+
+      const logs = await service.getAuditLogsForUser(userId, evidenceId);
+
+      expect(logs).toHaveLength(1);
+      expect(logs[0].action).toBe('DOWNLOAD');
+      expect(logs[0].status).toBe('SUCCESS');
+    });
+
+    it('rejects audit log retrieval by non-owner with ForbiddenException', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce({
+        ...baseEvidence,
+        userId: otherUserId,
+      });
+
+      await expect(
+        service.getAuditLogsForUser(userId, evidenceId),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });

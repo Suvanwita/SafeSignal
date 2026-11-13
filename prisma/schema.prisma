@@ -87,8 +87,9 @@ model User {
   incidents                  Incident[]
   incidentSuspiciousProfiles IncidentSuspiciousProfile[]
   abuseReports               AbuseReport[]
-  evidence           Evidence[]
-  timelineEvents     TimelineEvent[]
+  evidence                   Evidence[]
+  evidenceAuditLogs          EvidenceAuditLog[]
+  timelineEvents             TimelineEvent[]
   analyses           Analysis[]
   sessions           Session[]
 
@@ -272,10 +273,11 @@ model Evidence {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  incident    Incident     @relation(fields: [incidentId], references: [id], onDelete: Cascade)
-  abuseReport AbuseReport? @relation(fields: [abuseReportId], references: [id], onDelete: SetNull)
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  incident    Incident           @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  abuseReport AbuseReport?       @relation(fields: [abuseReportId], references: [id], onDelete: SetNull)
   analyses    Analysis[]
+  auditLogs   EvidenceAuditLog[]
 
   @@index([userId])
   @@index([incidentId])
@@ -332,3 +334,25 @@ model Analysis {
   @@index([evidenceId])
   @@map("analyses")
 }
+
+model EvidenceAuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  evidenceId String   @db.Uuid
+  action     String   // UPLOAD, DOWNLOAD, VERIFY, METADATA_READ, TOKEN_ISSUED
+  status     String   // SUCCESS, FAILED, MISMATCH
+  ipAddress  String?
+  userAgent  String?
+  details    Json?
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  evidence Evidence @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([evidenceId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("evidence_audit_logs")
+}
+

@@ -1,13 +1,23 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { Readable } from 'node:stream';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { assertOwnedResource } from '../../common';
+import {
+  CorruptedVaultDataException,
+  EncryptionService,
+  assertOwnedResource,
+} from '../../common';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { CreateEvidenceDto } from './dto/create-evidence.dto';
+import { DownloadTokenResponseDto } from './dto/download-token-response.dto';
+import { EvidenceAuditLogResponseDto } from './dto/evidence-audit-log-response.dto';
 import type {
   DeleteEvidenceResponseDto,
   EvidenceResponseDto,
@@ -27,7 +37,7 @@ import { VaultStorageService } from './vault-storage.service';
 const MAX_FUTURE_DRIFT_MS = 24 * 60 * 60 * 1000;
 
 export interface FileDownloadStreamResult {
-  stream: fs.ReadStream;
+  stream: fs.ReadStream | Readable;
   filename: string;
   mimeType: string;
   size: number;
@@ -35,9 +45,12 @@ export interface FileDownloadStreamResult {
 
 @Injectable()
 export class EvidenceService {
+  private readonly consumedDownloadTokens = new Map<string, number>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly vaultStorage: VaultStorageService,
+    private readonly encryptionService: EncryptionService,
   ) {}
 
   async findAllForUser(
@@ -228,6 +241,24 @@ export class EvidenceService {
         return evidence;
       });
 
+      // Record immutable audit log entry for evidence upload
+      await this.prisma.evidenceAuditLog.create({
+        data: {
+          userId,
+          evidenceId: created.id,
+          action: 'UPLOAD',
+          status: 'SUCCESS',
+          details: {
+            fileName: created.fileName,
+            mimeType: created.mimeType,
+            fileSize: created.fileSize,
+            sha256: created.sha256,
+            format: validated.format,
+            incidentId: created.incidentId,
+          } as Prisma.InputJsonValue,
+        },
+      });
+
       return this.toResponseDto(created);
     } catch (err) {
       // Clean up orphaned file if DB transaction failed
@@ -239,10 +270,16 @@ export class EvidenceService {
   /**
    * Retrieves an authenticated read stream for the evidence file.
    * Verifies user ownership and streams file securely without exposing filesystem paths.
+   * Records audit logs and timeline events for evidence download.
    */
   async getFileStreamForUser(
     userId: string,
     evidenceId: string,
+    auditContext?: {
+      method?: 'BEARER_AUTH' | 'TOKEN_AUTH';
+      ipAddress?: string;
+      userAgent?: string;
+    },
   ): Promise<FileDownloadStreamResult> {
     const record = await this.prisma.evidence.findUnique({
       where: { id: evidenceId },
@@ -260,6 +297,47 @@ export class EvidenceService {
       record.storageKey,
     );
 
+    const method = auditContext?.method ?? 'BEARER_AUTH';
+    const now = new Date();
+
+    // Record audit log for evidence download
+    await this.prisma.evidenceAuditLog.create({
+      data: {
+        userId,
+        evidenceId: record.id,
+        action: 'DOWNLOAD',
+        status: 'SUCCESS',
+        ipAddress: auditContext?.ipAddress ?? null,
+        userAgent: auditContext?.userAgent ?? null,
+        details: {
+          method,
+          fileName: record.fileName,
+          fileSize: size,
+          sha256: record.sha256,
+        } as Prisma.InputJsonValue,
+        createdAt: now,
+      },
+    });
+
+    // Record download event in incident timeline
+    await this.prisma.timelineEvent.create({
+      data: {
+        userId,
+        incidentId: record.incidentId,
+        eventType: 'EVIDENCE_DOWNLOADED',
+        title: `Evidence downloaded: ${record.title}`,
+        description: `Evidence file ${record.fileName} downloaded by owner via ${method}.`,
+        metadata: {
+          evidenceId: record.id,
+          fileName: record.fileName,
+          sha256: record.sha256,
+          fileSize: size,
+          method,
+        } as Prisma.InputJsonValue,
+        occurredAt: now,
+      },
+    });
+
     return {
       stream,
       filename: record.fileName || `evidence-${record.id}`,
@@ -270,7 +348,7 @@ export class EvidenceService {
 
   /**
    * Cryptographically verifies the integrity of an evidence file against its recorded upload hash.
-   * Recalculates the SHA-256 hash directly from the stored original file in the private vault
+   * Recalculates the SHA-256 hash directly from the stored file in the private vault
    * and compares it with the immutable hash recorded at upload.
    *
    * Note: Hash verification establishes file integrity relative to the recorded upload,
@@ -292,21 +370,56 @@ export class EvidenceService {
       });
     }
 
-    // Recalculate hash from stored original file in vault
-    const recalculated = await this.vaultStorage.computeFileSha256(
-      record.storageKey,
-    );
+    // Recalculate hash from stored file in vault (with authenticated AES-256-GCM decryption if encrypted)
+    let recalculated: { sha256: string; size: number };
+    let corruptedError: string | null = null;
+
+    try {
+      recalculated = await this.vaultStorage.computeFileSha256(
+        record.storageKey,
+      );
+    } catch (err: unknown) {
+      if (err instanceof CorruptedVaultDataException) {
+        corruptedError = err.message;
+        recalculated = {
+          sha256: 'CRYPTO_AUTHENTICATION_FAILED_CORRUPTED_CIPHERTEXT',
+          size: 0,
+        };
+      } else {
+        throw err;
+      }
+    }
 
     const originalHash = (record.sha256 || '').toLowerCase().trim();
     const recalculatedHash = recalculated.sha256.toLowerCase().trim();
     const isMatch =
-      originalHash.length === 64 && originalHash === recalculatedHash;
+      !corruptedError &&
+      originalHash.length === 64 &&
+      originalHash === recalculatedHash;
 
     const status = isMatch
       ? EvidenceIntegrityStatus.VERIFIED
       : EvidenceIntegrityStatus.INTEGRITY_MISMATCH;
 
     const now = new Date();
+
+    // Record audit log for verification
+    await this.prisma.evidenceAuditLog.create({
+      data: {
+        userId,
+        evidenceId: record.id,
+        action: 'VERIFY',
+        status: isMatch ? 'SUCCESS' : 'MISMATCH',
+        details: {
+          algorithm: 'SHA-256',
+          originalHash,
+          recalculatedHash,
+          matches: isMatch,
+          corrupted: !!corruptedError,
+        } as Prisma.InputJsonValue,
+        createdAt: now,
+      },
+    });
 
     // Record verification event in timeline audit trail
     await this.prisma.timelineEvent.create({
@@ -317,7 +430,9 @@ export class EvidenceService {
         title: `Evidence integrity verified: ${record.title} (${status})`,
         description: isMatch
           ? `Cryptographic integrity verified. Recalculated SHA-256 hash matches the upload record.`
-          : `Cryptographic integrity mismatch detected! Recalculated SHA-256 hash (${recalculatedHash.slice(0, 12)}...) differs from original upload hash (${originalHash.slice(0, 12)}...).`,
+          : corruptedError
+            ? `Cryptographic integrity mismatch detected! Evidence file failed authenticated decryption (tampered or corrupted ciphertext).`
+            : `Cryptographic integrity mismatch detected! Recalculated SHA-256 hash (${recalculatedHash.slice(0, 12)}...) differs from original upload hash (${originalHash.slice(0, 12)}...).`,
         metadata: {
           evidenceId: record.id,
           status,
@@ -327,6 +442,7 @@ export class EvidenceService {
           matches: isMatch,
           originalFileSize: record.fileSize,
           currentFileSize: recalculated.size,
+          corrupted: !!corruptedError,
         } as Prisma.InputJsonValue,
         occurredAt: now,
       },
@@ -346,6 +462,166 @@ export class EvidenceService {
       verifiedAt: now,
       disclaimer: EVIDENCE_INTEGRITY_DISCLAIMER,
     };
+  }
+
+  /**
+   * Generates a short-lived, single-purpose AES-256-GCM encrypted download authorization token.
+   * Enforces owner-only access and single-use replay protection.
+   */
+  async generateDownloadToken(
+    userId: string,
+    evidenceId: string,
+    ipAddress?: string,
+    userAgent?: string,
+  ): Promise<DownloadTokenResponseDto> {
+    const record = await this.prisma.evidence.findUnique({
+      where: { id: evidenceId },
+    });
+    assertOwnedResource(record, userId, 'Evidence');
+
+    if (!record.storageKey) {
+      throw new NotFoundException({
+        code: 'FILE_NOT_FOUND',
+        message: 'No physical file is associated with this evidence record.',
+      });
+    }
+
+    const jti = crypto.randomUUID();
+    const expiresInSeconds = 60;
+    const exp = Date.now() + expiresInSeconds * 1000;
+
+    const token = this.encryptionService.encryptDownloadToken({
+      evidenceId: record.id,
+      userId,
+      jti,
+      exp,
+      purpose: 'EVIDENCE_DOWNLOAD',
+    });
+
+    // Record audit log for download token issuance
+    await this.prisma.evidenceAuditLog.create({
+      data: {
+        userId,
+        evidenceId: record.id,
+        action: 'TOKEN_ISSUED',
+        status: 'SUCCESS',
+        ipAddress: ipAddress ?? null,
+        userAgent: userAgent ?? null,
+        details: {
+          jti,
+          expiresInSeconds,
+          expiresAt: new Date(exp).toISOString(),
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    return {
+      token,
+      expiresAt: new Date(exp).toISOString(),
+      expiresInSeconds,
+      evidenceId: record.id,
+      downloadUrl: `/api/v1/evidence/${record.id}/download?token=${encodeURIComponent(token)}`,
+    };
+  }
+
+  /**
+   * Validates and consumes a short-lived download authorization token.
+   * Performs authenticated decryption, expiration checking, evidence ID matching (IDOR prevention),
+   * and single-use replay protection.
+   */
+  async validateAndConsumeDownloadToken(
+    tokenString: string,
+    requestedEvidenceId: string,
+    _ipAddress?: string,
+    _userAgent?: string,
+  ): Promise<{ userId: string; evidenceId: string }> {
+    this.pruneConsumedTokens();
+
+    const payload = this.encryptionService.decryptDownloadToken(tokenString);
+
+    if (payload.purpose !== 'EVIDENCE_DOWNLOAD') {
+      throw new UnauthorizedException({
+        code: 'INVALID_DOWNLOAD_TOKEN_PURPOSE',
+        message: 'Token is not authorized for evidence download.',
+      });
+    }
+
+    // Verify token matches requested evidence ID (IDOR prevention)
+    if (payload.evidenceId !== requestedEvidenceId) {
+      throw new ForbiddenException({
+        code: 'DOWNLOAD_TOKEN_MISMATCH',
+        message: 'Download token was not issued for this evidence file.',
+      });
+    }
+
+    // Check expiration
+    if (Date.now() > payload.exp) {
+      throw new UnauthorizedException({
+        code: 'DOWNLOAD_TOKEN_EXPIRED',
+        message: 'Download authorization token has expired.',
+      });
+    }
+
+    // Check single-use replay protection
+    if (this.consumedDownloadTokens.has(payload.jti)) {
+      throw new UnauthorizedException({
+        code: 'DOWNLOAD_TOKEN_ALREADY_USED',
+        message: 'Download authorization token has already been consumed.',
+      });
+    }
+
+    // Mark token as consumed
+    this.consumedDownloadTokens.set(payload.jti, payload.exp);
+
+    // Verify that evidence exists and belongs to the authorized user
+    const record = await this.prisma.evidence.findUnique({
+      where: { id: requestedEvidenceId },
+    });
+    assertOwnedResource(record, payload.userId, 'Evidence');
+
+    return {
+      userId: payload.userId,
+      evidenceId: payload.evidenceId,
+    };
+  }
+
+  private pruneConsumedTokens(): void {
+    const now = Date.now();
+    for (const [jti, exp] of this.consumedDownloadTokens.entries()) {
+      if (now > exp) {
+        this.consumedDownloadTokens.delete(jti);
+      }
+    }
+  }
+
+  /**
+   * Retrieves complete audit records for an evidence file (restricted to evidence owner).
+   */
+  async getAuditLogsForUser(
+    userId: string,
+    evidenceId: string,
+  ): Promise<EvidenceAuditLogResponseDto[]> {
+    const record = await this.prisma.evidence.findUnique({
+      where: { id: evidenceId },
+    });
+    assertOwnedResource(record, userId, 'Evidence');
+
+    const logs = await this.prisma.evidenceAuditLog.findMany({
+      where: { evidenceId },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return logs.map((log) => ({
+      id: log.id,
+      userId: log.userId,
+      evidenceId: log.evidenceId,
+      action: log.action,
+      status: log.status,
+      ipAddress: log.ipAddress,
+      userAgent: log.userAgent,
+      details: log.details,
+      createdAt: log.createdAt,
+    }));
   }
 
   /**
