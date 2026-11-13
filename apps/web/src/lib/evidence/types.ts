@@ -45,6 +45,26 @@ export const ALLOWED_EVIDENCE_MIME_TYPES = [
 export const MAX_EVIDENCE_SIZE_MB = 15;
 export const MAX_EVIDENCE_SIZE_BYTES = MAX_EVIDENCE_SIZE_MB * 1024 * 1024;
 
+export type EvidenceIntegrityStatus = 'VERIFIED' | 'INTEGRITY_MISMATCH';
+
+export const EVIDENCE_INTEGRITY_DISCLAIMER =
+  'Cryptographic hash verification establishes file integrity relative to the recorded upload (confirming the file has remained unmodified in vault custody since upload), not the authenticity, accuracy, or truthfulness of the original content.';
+
+export interface VerifyEvidenceResult {
+  evidenceId: string;
+  status: EvidenceIntegrityStatus;
+  verified: boolean;
+  algorithm: string;
+  originalHash: string;
+  recalculatedHash: string;
+  originalFileSize: number | null;
+  currentFileSize: number;
+  mimeType: string | null;
+  uploadedAt: string;
+  verifiedAt: string;
+  disclaimer: string;
+}
+
 export function formatBytes(bytes: number | null | undefined): string {
   if (bytes === null || bytes === undefined || Number.isNaN(bytes)) {
     return '—';

@@ -13,7 +13,13 @@ import type {
   EvidenceResponseDto,
 } from './dto/evidence-response.dto';
 import type { ListEvidenceQueryDto } from './dto/list-evidence-query.dto';
+import type { UpdateEvidenceDto } from './dto/update-evidence.dto';
 import type { UploadEvidenceDto } from './dto/upload-evidence.dto';
+import {
+  EVIDENCE_INTEGRITY_DISCLAIMER,
+  EvidenceIntegrityStatus,
+  type VerifyEvidenceResponseDto,
+} from './dto/verify-evidence.dto';
 import { validateAndInspectEvidenceFile } from './vault-file-validator';
 import { VaultStorageService } from './vault-storage.service';
 
@@ -190,6 +196,115 @@ export class EvidenceService {
       mimeType: record.mimeType || 'application/octet-stream',
       size,
     };
+  }
+
+  /**
+   * Cryptographically verifies the integrity of an evidence file against its recorded upload hash.
+   * Recalculates the SHA-256 hash directly from the stored original file in the private vault
+   * and compares it with the immutable hash recorded at upload.
+   *
+   * Note: Hash verification establishes file integrity relative to the recorded upload,
+   * not the authenticity or truthfulness of the original content.
+   */
+  async verifyIntegrityForUser(
+    userId: string,
+    evidenceId: string,
+  ): Promise<VerifyEvidenceResponseDto> {
+    const record = await this.prisma.evidence.findUnique({
+      where: { id: evidenceId },
+    });
+    assertOwnedResource(record, userId, 'Evidence');
+
+    if (!record.storageKey) {
+      throw new NotFoundException({
+        code: 'EVIDENCE_FILE_NOT_FOUND',
+        message: 'No physical file is associated with this evidence record in the vault.',
+      });
+    }
+
+    // Recalculate hash from stored original file in vault
+    const recalculated = await this.vaultStorage.computeFileSha256(
+      record.storageKey,
+    );
+
+    const originalHash = (record.sha256 || '').toLowerCase().trim();
+    const recalculatedHash = recalculated.sha256.toLowerCase().trim();
+    const isMatch =
+      originalHash.length === 64 && originalHash === recalculatedHash;
+
+    const status = isMatch
+      ? EvidenceIntegrityStatus.VERIFIED
+      : EvidenceIntegrityStatus.INTEGRITY_MISMATCH;
+
+    const now = new Date();
+
+    // Record verification event in timeline audit trail
+    await this.prisma.timelineEvent.create({
+      data: {
+        userId,
+        incidentId: record.incidentId,
+        eventType: 'EVIDENCE_VERIFIED',
+        title: `Evidence integrity verified: ${record.title} (${status})`,
+        description: isMatch
+          ? `Cryptographic integrity verified. Recalculated SHA-256 hash matches the upload record.`
+          : `Cryptographic integrity mismatch detected! Recalculated SHA-256 hash (${recalculatedHash.slice(0, 12)}...) differs from original upload hash (${originalHash.slice(0, 12)}...).`,
+        metadata: {
+          evidenceId: record.id,
+          status,
+          algorithm: 'SHA-256',
+          originalHash,
+          recalculatedHash,
+          matches: isMatch,
+          originalFileSize: record.fileSize,
+          currentFileSize: recalculated.size,
+        } as Prisma.InputJsonValue,
+        occurredAt: now,
+      },
+    });
+
+    return {
+      evidenceId: record.id,
+      status,
+      verified: isMatch,
+      algorithm: 'SHA-256',
+      originalHash: record.sha256 ?? '',
+      recalculatedHash: recalculated.sha256,
+      originalFileSize: record.fileSize,
+      currentFileSize: recalculated.size,
+      mimeType: record.mimeType,
+      uploadedAt: record.createdAt,
+      verifiedAt: now,
+      disclaimer: EVIDENCE_INTEGRITY_DISCLAIMER,
+    };
+  }
+
+  /**
+   * Updates mutable metadata on an evidence record (title, description, sourceUrl).
+   * Strict security enforcement: users are NEVER permitted to edit sha256 or custody parameters.
+   */
+  async updateForUser(
+    userId: string,
+    evidenceId: string,
+    dto: UpdateEvidenceDto,
+  ): Promise<EvidenceResponseDto> {
+    const existing = await this.prisma.evidence.findUnique({
+      where: { id: evidenceId },
+    });
+    assertOwnedResource(existing, userId, 'Evidence');
+
+    // Immutable integrity enforcement: users cannot modify the original hash or custody keys
+    const updated = await this.prisma.evidence.update({
+      where: { id: evidenceId },
+      data: {
+        ...(dto.title !== undefined ? { title: dto.title } : {}),
+        ...(dto.description !== undefined
+          ? { description: dto.description }
+          : {}),
+        ...(dto.sourceUrl !== undefined ? { sourceUrl: dto.sourceUrl } : {}),
+      },
+    });
+
+    return this.toResponseDto(updated);
   }
 
   /**

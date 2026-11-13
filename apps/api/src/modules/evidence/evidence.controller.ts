@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Res,
@@ -37,7 +38,9 @@ import {
   EvidenceResponseDto,
 } from './dto/evidence-response.dto';
 import { ListEvidenceQueryDto } from './dto/list-evidence-query.dto';
+import { UpdateEvidenceDto } from './dto/update-evidence.dto';
 import { UploadEvidenceDto } from './dto/upload-evidence.dto';
+import { VerifyEvidenceResponseDto } from './dto/verify-evidence.dto';
 import { EvidenceService } from './evidence.service';
 import { MAX_EVIDENCE_FILE_SIZE_BYTES } from './vault-file-validator';
 
@@ -107,6 +110,67 @@ export class EvidenceController {
     });
 
     return new StreamableFile(stream);
+  }
+
+  @Post(':id/verify')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Cryptographically verify evidence file integrity against its recorded upload hash',
+    description:
+      'Recalculates the SHA-256 checksum from the stored original file in the private vault and compares it with the upload hash. Note: Hash verification establishes file integrity relative to the recorded upload, not the authenticity of the original content.',
+  })
+  @ApiOkResponse({
+    type: VerifyEvidenceResponseDto,
+    description:
+      'Integrity verification result (VERIFIED or INTEGRITY_MISMATCH)',
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({
+    description: 'Evidence record or vault file not found',
+  })
+  verify(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<VerifyEvidenceResponseDto> {
+    return this.evidenceService.verifyIntegrityForUser(userId, id);
+  }
+
+  @Get(':id/verify')
+  @ApiOperation({
+    summary: 'Cryptographically verify evidence file integrity (GET alias)',
+    description:
+      'Alias for POST :id/verify. Recalculates the SHA-256 checksum from the stored original file in the private vault and compares it with the upload hash.',
+  })
+  @ApiOkResponse({ type: VerifyEvidenceResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({
+    description: 'Evidence record or vault file not found',
+  })
+  verifyGet(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<VerifyEvidenceResponseDto> {
+    return this.evidenceService.verifyIntegrityForUser(userId, id);
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary:
+      'Update evidence metadata (title, description, sourceUrl). Original hash cannot be edited.',
+  })
+  @ApiOkResponse({ type: EvidenceResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({ description: 'Evidence not found' })
+  update(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateEvidenceDto,
+  ): Promise<EvidenceResponseDto> {
+    return this.evidenceService.updateForUser(userId, id, dto);
   }
 
   @Post('upload')

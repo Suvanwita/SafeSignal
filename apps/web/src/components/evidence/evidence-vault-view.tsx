@@ -13,6 +13,7 @@ import {
   Filter,
   HardDrive,
   Image as ImageIcon,
+  Loader2,
   Plus,
   RefreshCw,
   Search,
@@ -43,13 +44,19 @@ import {
 } from '@/components/ui/table';
 import { notify } from '@/components/ui/toaster';
 import type { AuthUser } from '@/lib/auth/types';
-import { deleteEvidence, fetchEvidence } from '@/lib/evidence/client-evidence';
+import {
+  deleteEvidence,
+  fetchEvidence,
+  verifyEvidence,
+} from '@/lib/evidence/client-evidence';
 import {
   formatBytes,
   getFileFormatCategory,
   type EvidenceRecord,
+  type VerifyEvidenceResult,
 } from '@/lib/evidence/types';
 import { UploadEvidenceDialog } from './upload-evidence-dialog';
+import { VerifyEvidenceDialog } from './verify-evidence-dialog';
 
 export interface EvidenceVaultViewProps {
   user: AuthUser;
@@ -91,6 +98,13 @@ export function EvidenceVaultView({
   const [deletingId, setDeletingId] = React.useState<string | null>(null);
   const [isDeleting, setIsDeleting] = React.useState<boolean>(false);
   const [copiedShaId, setCopiedShaId] = React.useState<string | null>(null);
+
+  // Verification state
+  const [verifyingId, setVerifyingId] = React.useState<string | null>(null);
+  const [verificationResult, setVerificationResult] = React.useState<{
+    result: VerifyEvidenceResult;
+    record: EvidenceRecord;
+  } | null>(null);
 
   const incidentTitleMap = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -138,6 +152,32 @@ export function EvidenceVaultView({
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Cryptographically verify evidence integrity
+  const handleVerify = async (ev: EvidenceRecord) => {
+    setVerifyingId(ev.id);
+    try {
+      const res = await verifyEvidence(ev.id);
+      setVerificationResult({ result: res, record: ev });
+      if (res.status === 'VERIFIED') {
+        notify.verified(
+          'Cryptographic integrity verified',
+          'Recalculated SHA-256 matches the original upload hash byte-for-byte.',
+        );
+      } else {
+        notify.alert(
+          'Integrity mismatch detected',
+          'Recalculated SHA-256 hash does not match the upload record!',
+        );
+      }
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : 'Integrity verification failed.';
+      notify.alert('Verification error', msg);
+    } finally {
+      setVerifyingId(null);
+    }
   };
 
   // Delete evidence
@@ -589,6 +629,21 @@ export function EvidenceVaultView({
                             <Button
                               variant="outline"
                               size="sm"
+                              onClick={() => handleVerify(ev)}
+                              disabled={verifyingId === ev.id}
+                              title="Cryptographically verify SHA-256 integrity"
+                              className="h-8 gap-1.5 text-xs text-blue-700 hover:text-blue-800 hover:bg-blue-50 border-blue-200"
+                            >
+                              {verifyingId === ev.id ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <ShieldCheck className="h-3.5 w-3.5 text-blue-600" />
+                              )}
+                              Verify
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
                               onClick={() => handleDownload(ev)}
                               title="Download authenticated evidence file"
                               className="h-8 gap-1.5 text-xs text-slate-700"
@@ -637,6 +692,15 @@ export function EvidenceVaultView({
         confirmLabel={isDeleting ? 'Deleting...' : 'Delete File'}
         variant="destructive"
         loading={isDeleting}
+      />
+
+      {/* Cryptographic Integrity Verification Dialog */}
+      <VerifyEvidenceDialog
+        isOpen={Boolean(verificationResult)}
+        onClose={() => setVerificationResult(null)}
+        result={verificationResult?.result ?? null}
+        evidenceTitle={verificationResult?.record.title}
+        evidenceFilename={verificationResult?.record.fileName}
       />
     </AppShell>
   );

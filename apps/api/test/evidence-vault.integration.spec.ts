@@ -421,4 +421,303 @@ describe('Evidence Vault Integration (/api/v1/evidence)', () => {
     expect(absolutePath.startsWith(vaultStorage.getVaultRoot())).toBe(true);
     expect(fs.existsSync(absolutePath)).toBe(true);
   });
+
+  describe('Cryptographic Evidence Integrity Verification (/api/v1/evidence/:id/verify)', () => {
+    it('successfully verifies integrity when file is unmodified, recording timestamps, hashes, size, and timeline event', async () => {
+      const user = await registerUser('integrity-success');
+
+      // Create incident
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Integrity Verification Case',
+          category: AbuseCategory.HARASSMENT,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+      const incidentId = incRes.body.data.id;
+
+      // Prepare PNG
+      const pngBuffer = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from('IMMUTABLE_INTEGRITY_EVIDENCE_BUFFER_2026'),
+      ]);
+      const expectedSha256 = crypto
+        .createHash('sha256')
+        .update(pngBuffer)
+        .digest('hex');
+
+      // 1. Upload evidence file
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incidentId)
+        .field('title', 'Direct Message Harassment Capture')
+        .attach('file', pngBuffer, 'threat.png')
+        .expect(201);
+
+      const evidenceId = uploadRes.body.data.id;
+
+      // 2. Verify stored attributes in PostgreSQL: hash, upload timestamp, size, MIME type
+      const record = await prisma.evidence.findUniqueOrThrow({
+        where: { id: evidenceId },
+      });
+      expect(record.sha256).toBe(expectedSha256);
+      expect(record.fileSize).toBe(pngBuffer.length);
+      expect(record.mimeType).toBe('image/png');
+      expect(record.createdAt).toBeInstanceOf(Date);
+
+      // 3. Call evidence verification endpoint
+      const verifyRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/verify`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(verifyRes.body.data.status).toBe('VERIFIED');
+      expect(verifyRes.body.data.verified).toBe(true);
+      expect(verifyRes.body.data.evidenceId).toBe(evidenceId);
+      expect(verifyRes.body.data.algorithm).toBe('SHA-256');
+      expect(verifyRes.body.data.originalHash).toBe(expectedSha256);
+      expect(verifyRes.body.data.recalculatedHash).toBe(expectedSha256);
+      expect(verifyRes.body.data.originalFileSize).toBe(pngBuffer.length);
+      expect(verifyRes.body.data.currentFileSize).toBe(pngBuffer.length);
+      expect(verifyRes.body.data.mimeType).toBe('image/png');
+      expect(verifyRes.body.data.uploadedAt).toBeDefined();
+      expect(verifyRes.body.data.verifiedAt).toBeDefined();
+      expect(verifyRes.body.data.disclaimer).toContain(
+        'relative to the recorded upload',
+      );
+      expect(verifyRes.body.data.disclaimer).toContain(
+        'not the authenticity',
+      );
+
+      // 4. Also verify GET alias returns the same result
+      const getVerifyRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/verify`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+      expect(getVerifyRes.body.data.status).toBe('VERIFIED');
+
+      // 5. Verify timeline event was created
+      const events = await prisma.timelineEvent.findMany({
+        where: { incidentId, eventType: 'EVIDENCE_VERIFIED' },
+      });
+      expect(events.length).toBeGreaterThanOrEqual(1);
+      expect(events[0].title).toContain('VERIFIED');
+    });
+
+    it('detects modified files and returns INTEGRITY_MISMATCH when vault file bytes are altered', async () => {
+      const user = await registerUser('tamper-detect');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Tamper Detection Incident',
+          category: AbuseCategory.THREATS,
+          severity: Severity.CRITICAL,
+        })
+        .expect(201);
+      const incidentId = incRes.body.data.id;
+
+      const txtBuffer = Buffer.from(
+        'Incident Log: Genuine original text capture recorded on server.',
+        'utf-8',
+      );
+      const originalHash = crypto
+        .createHash('sha256')
+        .update(txtBuffer)
+        .digest('hex');
+
+      // Upload file
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incidentId)
+        .attach('file', txtBuffer, 'chat-log.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // Locate physical file on disk in vault storage
+      const dbRecord = await prisma.evidence.findUniqueOrThrow({
+        where: { id: evidenceId },
+      });
+      const absolutePath = vaultStorage.resolveAndValidatePath(dbRecord.storageKey!);
+
+      // Tamper with the file on disk (corrupt 1 or more bytes)
+      const corruptedBytes = Buffer.from(
+        'Incident Log: [TAMPERED BY ATTACKER] Altered text content.',
+        'utf-8',
+      );
+      fs.writeFileSync(absolutePath, corruptedBytes);
+
+      const tamperedHash = crypto
+        .createHash('sha256')
+        .update(corruptedBytes)
+        .digest('hex');
+
+      // Call verification endpoint
+      const verifyRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/verify`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(verifyRes.body.data.status).toBe('INTEGRITY_MISMATCH');
+      expect(verifyRes.body.data.verified).toBe(false);
+      expect(verifyRes.body.data.originalHash).toBe(originalHash);
+      expect(verifyRes.body.data.recalculatedHash).toBe(tamperedHash);
+      expect(verifyRes.body.data.recalculatedHash).not.toBe(originalHash);
+      expect(verifyRes.body.data.currentFileSize).toBe(corruptedBytes.length);
+      expect(verifyRes.body.data.disclaimer).toBeDefined();
+
+      // Verify timeline event recorded the integrity mismatch
+      const events = await prisma.timelineEvent.findMany({
+        where: { incidentId, eventType: 'EVIDENCE_VERIFIED' },
+      });
+      const mismatchEvent = events.find((e) =>
+        e.title.includes('INTEGRITY_MISMATCH'),
+      );
+      expect(mismatchEvent).toBeDefined();
+    });
+
+    it('handles missing files cleanly and returns 404 EVIDENCE_FILE_NOT_FOUND', async () => {
+      const user = await registerUser('missing-file-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Missing File Test Incident',
+          category: AbuseCategory.OTHER,
+          severity: Severity.LOW,
+        })
+        .expect(201);
+      const incidentId = incRes.body.data.id;
+
+      const pdfBuffer = Buffer.from('%PDF-1.4\n%Missing File Test PDF Document');
+
+      // Upload file
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incidentId)
+        .attach('file', pdfBuffer, 'document.pdf')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // Locate physical file on disk and delete it
+      const dbRecord = await prisma.evidence.findUniqueOrThrow({
+        where: { id: evidenceId },
+      });
+      const absolutePath = vaultStorage.resolveAndValidatePath(dbRecord.storageKey!);
+      if (fs.existsSync(absolutePath)) {
+        fs.unlinkSync(absolutePath);
+      }
+
+      // Call verification endpoint -> 404 EVIDENCE_FILE_NOT_FOUND
+      const verifyRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/verify`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(404);
+
+      expect(verifyRes.body.error.code).toBe('EVIDENCE_FILE_NOT_FOUND');
+      expect(verifyRes.body.error.message).toContain('not found in vault storage');
+    });
+
+    it('prohibits users from editing the original hash and custody properties', async () => {
+      const user = await registerUser('immutable-hash-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Immutability Test Incident',
+          category: AbuseCategory.STALKING,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+      const incidentId = incRes.body.data.id;
+
+      const txtBuffer = Buffer.from('Immutable hash baseline test');
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incidentId)
+        .attach('file', txtBuffer, 'baseline.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+      const initialHash = uploadRes.body.data.sha256;
+
+      // 1. Attempt to PATCH sha256 -> rejected with 400 validation error
+      await request(app.getHttpServer())
+        .patch(`/api/v1/evidence/${evidenceId}`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          sha256:
+            '0000000000000000000000000000000000000000000000000000000000000000',
+        })
+        .expect(400);
+
+      // 2. Attempt to PATCH storageKey -> rejected with 400 validation error
+      await request(app.getHttpServer())
+        .patch(`/api/v1/evidence/${evidenceId}`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          storageKey: 'fake/path.txt',
+        })
+        .expect(400);
+
+      // Verify DB hash is completely unchanged
+      const dbRecord = await prisma.evidence.findUniqueOrThrow({
+        where: { id: evidenceId },
+      });
+      expect(dbRecord.sha256).toBe(initialHash);
+
+      // 3. Updating allowed metadata works fine
+      const patchRes = await request(app.getHttpServer())
+        .patch(`/api/v1/evidence/${evidenceId}`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Updated Safe Title for Legal Discovery',
+          description: 'Updated custody notes without touching hash',
+        })
+        .expect(200);
+
+      expect(patchRes.body.data.title).toBe(
+        'Updated Safe Title for Legal Discovery',
+      );
+      expect(patchRes.body.data.sha256).toBe(initialHash);
+    });
+
+    it('enforces ownership checks on verification (403 for other users)', async () => {
+      const userAlice = await registerUser('alice-verify-owner');
+      const userBob = await registerUser('bob-verify-attacker');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${userAlice.accessToken}`)
+        .send({
+          title: 'Alice Confidential Incident',
+          category: AbuseCategory.PRIVACY_VIOLATION,
+          severity: Severity.MEDIUM,
+        })
+        .expect(201);
+
+      const txtBuffer = Buffer.from('Alice private evidence');
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${userAlice.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', txtBuffer, 'alice.txt')
+        .expect(201);
+      const aliceEvidenceId = uploadRes.body.data.id;
+
+      // Bob tries to verify Alice's evidence -> 403 Forbidden
+      await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${aliceEvidenceId}/verify`)
+        .set('Authorization', `Bearer ${userBob.accessToken}`)
+        .expect(403);
+    });
+  });
 });

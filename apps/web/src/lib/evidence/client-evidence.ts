@@ -1,7 +1,11 @@
 'use client';
 
 import { AuthApiError, ensureCsrfToken } from '@/lib/auth/client-api';
-import type { EvidenceRecord, UploadEvidenceInput } from './types';
+import type {
+  EvidenceRecord,
+  UploadEvidenceInput,
+  VerifyEvidenceResult,
+} from './types';
 
 export async function uploadEvidence(
   input: UploadEvidenceInput,
@@ -95,6 +99,28 @@ export async function deleteEvidence(
     throw new AuthApiError(
       errPayload?.error?.message || 'Failed to delete evidence record',
       errPayload?.error?.code || 'DELETE_FAILED',
+    );
+  }
+
+  const payload = await res.json();
+  return payload.data;
+}
+
+export async function verifyEvidence(id: string): Promise<VerifyEvidenceResult> {
+  const csrfToken = await ensureCsrfToken();
+  const res = await fetch(`/api/evidence/${id}/verify`, {
+    method: 'POST',
+    headers: {
+      'x-csrf-token': csrfToken,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!res.ok) {
+    const errPayload = await res.json().catch(() => null);
+    throw new AuthApiError(
+      errPayload?.error?.message || 'Failed to verify evidence file integrity',
+      errPayload?.error?.code || 'VERIFICATION_FAILED',
     );
   }
 

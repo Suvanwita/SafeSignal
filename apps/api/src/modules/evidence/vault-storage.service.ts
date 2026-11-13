@@ -166,6 +166,65 @@ export class VaultStorageService {
   }
 
   /**
+   * Recalculates the SHA-256 hash of a file residing in private vault storage.
+   */
+  async computeFileSha256(
+    storageKey: string,
+  ): Promise<{ sha256: string; size: number }> {
+    const absolutePath = this.resolveAndValidatePath(storageKey);
+
+    try {
+      const stat = await fs.promises.stat(absolutePath);
+      if (!stat.isFile()) {
+        throw new NotFoundException({
+          code: 'EVIDENCE_FILE_NOT_FOUND',
+          message: 'Evidence file not found in vault storage.',
+        });
+      }
+
+      return await new Promise<{ sha256: string; size: number }>(
+        (resolve, reject) => {
+          const hash = crypto.createHash('sha256');
+          const stream = fs.createReadStream(absolutePath);
+
+          stream.on('data', (chunk) => {
+            hash.update(chunk);
+          });
+
+          stream.on('end', () => {
+            resolve({
+              sha256: hash.digest('hex'),
+              size: stat.size,
+            });
+          });
+
+          stream.on('error', (err) => {
+            reject(err);
+          });
+        },
+      );
+    } catch (err: unknown) {
+      if (err instanceof NotFoundException) throw err;
+      throw new NotFoundException({
+        code: 'EVIDENCE_FILE_NOT_FOUND',
+        message: 'Evidence file not found in vault storage.',
+      });
+    }
+  }
+
+  /**
+   * Checks if a vaulted file exists on disk.
+   */
+  fileExists(storageKey: string): boolean {
+    try {
+      const absolutePath = this.resolveAndValidatePath(storageKey);
+      return fs.existsSync(absolutePath) && fs.statSync(absolutePath).isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Removes a file from the vault storage.
    */
   async deleteFile(storageKey: string): Promise<void> {

@@ -17,13 +17,16 @@ import {
   FileText,
   FolderLock,
   Link2,
+  Loader2,
   Plus,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   Unlink,
   UserX,
 } from 'lucide-react';
 import { UploadEvidenceDialog } from '@/components/evidence/upload-evidence-dialog';
+import { VerifyEvidenceDialog } from '@/components/evidence/verify-evidence-dialog';
 import { AppShell } from '@/components/layout/app-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -73,9 +76,11 @@ import {
   type IncidentDetail,
   type IncidentStatus,
 } from '@/lib/incidents/types';
+import { verifyEvidence } from '@/lib/evidence/client-evidence';
 import {
   formatBytes,
   getFileFormatCategory,
+  type VerifyEvidenceResult,
 } from '@/lib/evidence/types';
 import type { SuspiciousProfile } from '@/lib/intelligence/types';
 
@@ -149,6 +154,42 @@ export function IncidentDetailView({
   // Evidence Vault Dialog & State
   const [uploadEvidenceDialogOpen, setUploadEvidenceDialogOpen] = React.useState(false);
   const [copiedShaId, setCopiedShaId] = React.useState<string | null>(null);
+
+  // Evidence Verification Dialog & State
+  const [verifyingEvidenceId, setVerifyingEvidenceId] = React.useState<string | null>(null);
+  const [verificationResult, setVerificationResult] = React.useState<{
+    result: VerifyEvidenceResult;
+    evidence: { id: string; title: string; fileName: string | null };
+  } | null>(null);
+
+  const handleVerifyEvidence = async (ev: {
+    id: string;
+    title: string;
+    fileName: string | null;
+  }) => {
+    setVerifyingEvidenceId(ev.id);
+    try {
+      const res = await verifyEvidence(ev.id);
+      setVerificationResult({ result: res, evidence: ev });
+      if (res.status === 'VERIFIED') {
+        notify.verified(
+          'Cryptographic integrity verified',
+          'Recalculated SHA-256 matches the original upload hash.',
+        );
+      } else {
+        notify.alert(
+          'Integrity mismatch detected',
+          'Recalculated SHA-256 does NOT match the upload record!',
+        );
+      }
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error ? err.message : 'Integrity verification failed.';
+      notify.alert('Verification error', msg);
+    } finally {
+      setVerifyingEvidenceId(null);
+    }
+  };
 
   const handleCopySha = (id: string, sha: string) => {
     navigator.clipboard.writeText(sha);
@@ -756,16 +797,33 @@ export function IncidentDetailView({
                           {formatDateTime(ev.capturedAt ?? ev.createdAt)}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleDownloadEvidence(ev)}
-                            className="h-7 gap-1 px-2 text-xs text-slate-700"
-                            title="Download authenticated evidence"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                            Download
-                          </Button>
+                          <div className="flex items-center justify-end gap-1.5">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleVerifyEvidence(ev)}
+                              disabled={verifyingEvidenceId === ev.id}
+                              className="h-7 gap-1 px-2 text-xs text-blue-700 hover:text-blue-800 hover:bg-blue-50 border-blue-200"
+                              title="Cryptographically verify SHA-256 integrity"
+                            >
+                              {verifyingEvidenceId === ev.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <ShieldCheck className="h-3 w-3 text-blue-600" />
+                              )}
+                              Verify
+                            </Button>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDownloadEvidence(ev)}
+                              className="h-7 gap-1 px-2 text-xs text-slate-700"
+                              title="Download authenticated evidence"
+                            >
+                              <Download className="h-3.5 w-3.5" />
+                              Download
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -1150,6 +1208,15 @@ export function IncidentDetailView({
           refreshIncident();
         }}
         preselectedIncidentId={incident.id}
+      />
+
+      {/* CRYPTOGRAPHIC INTEGRITY VERIFICATION DIALOG */}
+      <VerifyEvidenceDialog
+        isOpen={Boolean(verificationResult)}
+        onClose={() => setVerificationResult(null)}
+        result={verificationResult?.result ?? null}
+        evidenceTitle={verificationResult?.evidence.title}
+        evidenceFilename={verificationResult?.evidence.fileName}
       />
     </AppShell>
   );

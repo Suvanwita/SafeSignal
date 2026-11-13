@@ -14,6 +14,7 @@ describe('EvidenceService', () => {
       findMany: jest.Mock;
       findUnique: jest.Mock;
       create: jest.Mock;
+      update: jest.Mock;
       delete: jest.Mock;
     };
     incident: {
@@ -33,6 +34,7 @@ describe('EvidenceService', () => {
     getReadStream: jest.Mock;
     deleteFile: jest.Mock;
     getVaultRoot: jest.Mock;
+    computeFileSha256: jest.Mock;
   };
 
   const userId = '11111111-1111-1111-1111-111111111111';
@@ -78,6 +80,7 @@ describe('EvidenceService', () => {
         findMany: jest.fn(),
         findUnique: jest.fn(),
         create: tx.evidence.create,
+        update: jest.fn(),
         delete: tx.evidence.delete,
       },
       incident: {
@@ -103,6 +106,10 @@ describe('EvidenceService', () => {
       }),
       deleteFile: jest.fn().mockResolvedValue(undefined),
       getVaultRoot: jest.fn().mockReturnValue('/storage/evidence-vault'),
+      computeFileSha256: jest.fn().mockResolvedValue({
+        sha256: baseEvidence.sha256,
+        size: 102400,
+      }),
     };
 
     service = new EvidenceService(
@@ -395,6 +402,137 @@ describe('EvidenceService', () => {
           }),
         }),
       );
+    });
+  });
+
+  describe('verifyIntegrityForUser (Cryptographic Evidence Integrity Verification)', () => {
+    it('returns VERIFIED when recalculated hash matches original hash', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+      vaultStorage.computeFileSha256.mockResolvedValueOnce({
+        sha256: baseEvidence.sha256,
+        size: 102400,
+      });
+
+      const result = await service.verifyIntegrityForUser(userId, evidenceId);
+
+      expect(result.status).toBe('VERIFIED');
+      expect(result.verified).toBe(true);
+      expect(result.algorithm).toBe('SHA-256');
+      expect(result.originalHash).toBe(baseEvidence.sha256);
+      expect(result.recalculatedHash).toBe(baseEvidence.sha256);
+      expect(result.originalFileSize).toBe(102400);
+      expect(result.currentFileSize).toBe(102400);
+      expect(result.disclaimer).toContain('relative to the recorded upload');
+      expect(prisma.timelineEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            eventType: 'EVIDENCE_VERIFIED',
+            incidentId,
+            title: expect.stringContaining('VERIFIED'),
+          }),
+        }),
+      );
+    });
+
+    it('returns INTEGRITY_MISMATCH when file bytes have been modified or corrupted', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+      const tamperedHash =
+        'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff';
+      vaultStorage.computeFileSha256.mockResolvedValueOnce({
+        sha256: tamperedHash,
+        size: 102450,
+      });
+
+      const result = await service.verifyIntegrityForUser(userId, evidenceId);
+
+      expect(result.status).toBe('INTEGRITY_MISMATCH');
+      expect(result.verified).toBe(false);
+      expect(result.originalHash).toBe(baseEvidence.sha256);
+      expect(result.recalculatedHash).toBe(tamperedHash);
+      expect(result.currentFileSize).toBe(102450);
+      expect(result.disclaimer).toBeDefined();
+      expect(prisma.timelineEvent.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            eventType: 'EVIDENCE_VERIFIED',
+            title: expect.stringContaining('INTEGRITY_MISMATCH'),
+          }),
+        }),
+      );
+    });
+
+    it('throws NotFoundException when file is missing from vault storage', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+      vaultStorage.computeFileSha256.mockRejectedValueOnce(
+        new NotFoundException({
+          code: 'EVIDENCE_FILE_NOT_FOUND',
+          message: 'Evidence file not found in vault storage.',
+        }),
+      );
+
+      await expect(
+        service.verifyIntegrityForUser(userId, evidenceId),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws NotFoundException when evidence record has no physical file in vault', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce({
+        ...baseEvidence,
+        storageKey: null,
+      });
+
+      await expect(
+        service.verifyIntegrityForUser(userId, evidenceId),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('throws ForbiddenException when attempting to verify evidence of another user', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce({
+        ...baseEvidence,
+        userId: otherUserId,
+      });
+
+      await expect(
+        service.verifyIntegrityForUser(userId, evidenceId),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('updateForUser', () => {
+    it('updates mutable metadata without modifying original hash or custody keys', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+      prisma.evidence.update.mockResolvedValueOnce({
+        ...baseEvidence,
+        title: 'Updated title',
+        description: 'Updated description',
+      });
+
+      const result = await service.updateForUser(userId, evidenceId, {
+        title: 'Updated title',
+        description: 'Updated description',
+      });
+
+      expect(result.title).toBe('Updated title');
+      expect(result.description).toBe('Updated description');
+      expect(result.sha256).toBe(baseEvidence.sha256);
+      expect(prisma.evidence.update).toHaveBeenCalledWith({
+        where: { id: evidenceId },
+        data: {
+          title: 'Updated title',
+          description: 'Updated description',
+        },
+      });
+    });
+
+    it('throws ForbiddenException when updating evidence belonging to another user', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce({
+        ...baseEvidence,
+        userId: otherUserId,
+      });
+
+      await expect(
+        service.updateForUser(userId, evidenceId, { title: 'Hacked' }),
+      ).rejects.toThrow(ForbiddenException);
     });
   });
 });
