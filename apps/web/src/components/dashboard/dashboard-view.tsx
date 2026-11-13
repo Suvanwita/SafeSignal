@@ -231,6 +231,14 @@ export function DashboardView({
       router.push('/evidence');
       return;
     }
+    if (
+      title === 'Scan sensitive information' ||
+      title === 'Scan text for sensitive information' ||
+      title === 'Protect privacy'
+    ) {
+      router.push('/privacy');
+      return;
+    }
     notify.info(
       title,
       'This module workflow will open directly once feature pages are connected.',
