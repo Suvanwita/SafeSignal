@@ -12,6 +12,11 @@ export class ListSafetyAnalysesQueryDto {
   @IsUUID('4')
   evidenceId?: string;
 
+  @ApiPropertyOptional({ description: 'Filter by associated abuse report UUID' })
+  @IsOptional()
+  @IsUUID('4')
+  abuseReportId?: string;
+
   @ApiPropertyOptional({
     description: 'Filter by risk level',
     enum: ['LOW', 'MEDIUM', 'HIGH'],

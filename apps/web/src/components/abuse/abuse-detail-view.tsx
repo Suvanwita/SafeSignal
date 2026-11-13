@@ -51,6 +51,12 @@ import {
   PLATFORM_OPTIONS,
   type Platform,
 } from '@/lib/identity/types';
+import { SafetyAnalysisCard } from '@/components/intelligence/safety-analysis-card';
+import {
+  analyzeAbuseReportSafety,
+  fetchSafetyAnalyses,
+} from '@/lib/intelligence/client-intelligence';
+import type { SafetyAnalysisResult } from '@/lib/intelligence/types';
 import { cn } from '@/lib/utils';
 
 export interface AbuseDetailViewProps {
@@ -150,6 +156,56 @@ export function AbuseDetailView({
   const [saving, setSaving] = React.useState(false);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+
+  // Safety Intelligence state
+  const [safetyAnalyses, setSafetyAnalyses] = React.useState<
+    SafetyAnalysisResult[]
+  >([]);
+  const [currentSafetyAnalysis, setCurrentSafetyAnalysis] =
+    React.useState<SafetyAnalysisResult | null>(null);
+  const [isAnalyzingSafety, setIsAnalyzingSafety] = React.useState(false);
+
+  const loadSafetyAnalyses = React.useCallback(async () => {
+    try {
+      const list = await fetchSafetyAnalyses({ abuseReportId: report.id });
+      setSafetyAnalyses(list);
+      if (list.length > 0) {
+        setCurrentSafetyAnalysis(list[0]);
+      }
+    } catch {
+      // non-fatal
+    }
+  }, [report.id]);
+
+  React.useEffect(() => {
+    loadSafetyAnalyses();
+  }, [loadSafetyAnalyses]);
+
+  async function handleRunSafetyAnalysis() {
+    setIsAnalyzingSafety(true);
+    try {
+      const res = await analyzeAbuseReportSafety(report.id);
+      setCurrentSafetyAnalysis(res);
+      setSafetyAnalyses((prev) => {
+        const withoutCurrent = prev.filter((a) => a.id !== res.id);
+        return [res, ...withoutCurrent];
+      });
+      notify.verified(
+        'Safety analysis complete',
+        `${res.riskLevel} Risk determined (${res.category}).`,
+      );
+    } catch (err: unknown) {
+      const msg =
+        err instanceof AuthApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Unable to complete report safety analysis.';
+      notify.alert('Analysis failed', msg);
+    } finally {
+      setIsAnalyzingSafety(false);
+    }
+  }
 
   function validateClient(): FormErrors {
     const next: FormErrors = {};
@@ -407,8 +463,20 @@ export function AbuseDetailView({
           </Card>
         </div>
 
-        {/* Right: Edit Form */}
-        <div className="lg:col-span-8">
+        {/* Right: Safety Intelligence & Edit Form */}
+        <div className="space-y-6 lg:col-span-8">
+          <SafetyAnalysisCard
+            title="Report Safety Intelligence & Threat Assessment"
+            description="Evaluates report description, platform context, and recurring threat patterns across incident cases."
+            analyses={safetyAnalyses}
+            currentAnalysis={currentSafetyAnalysis}
+            onSelectAnalysis={setCurrentSafetyAnalysis}
+            isAnalyzing={isAnalyzingSafety}
+            onRunAnalysis={handleRunSafetyAnalysis}
+            buttonText="Evaluate Report Safety"
+            targetType="report"
+          />
+
           <Card>
             <CardHeader className="border-b border-slate-100 pb-4">
               <CardTitle className="text-base">

@@ -37,6 +37,13 @@ export class AnalyzeSafetyTextDto {
   evidenceId?: string;
 
   @ApiPropertyOptional({
+    description: 'Optional abuse report UUID to associate this safety analysis with',
+  })
+  @IsOptional()
+  @IsUUID('4')
+  abuseReportId?: string;
+
+  @ApiPropertyOptional({
     description:
       'Whether to store the analysis result in PostgreSQL (defaults to true)',
     default: true,

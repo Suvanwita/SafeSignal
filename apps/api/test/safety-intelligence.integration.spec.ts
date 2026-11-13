@@ -193,6 +193,7 @@ describe('Safety Intelligence Integration (/api/v1/intelligence/safety)', () => 
   describe('Incident Case & Evidence Association', () => {
     let incidentAId: string;
     let evidenceAId: string;
+    let abuseReportAId: string;
 
     beforeAll(async () => {
       // 1. Create an incident for User A
@@ -209,7 +210,7 @@ describe('Safety Intelligence Integration (/api/v1/intelligence/safety)', () => 
       incidentAId = incRes.body.data.id;
 
       // 2. Submit an abuse report into the incident
-      await request(app.getHttpServer())
+      const repRes = await request(app.getHttpServer())
         .post('/api/v1/abuse/reports')
         .set('Authorization', `Bearer ${userA.token}`)
         .send({
@@ -223,18 +224,151 @@ describe('Safety Intelligence Integration (/api/v1/intelligence/safety)', () => 
           incidentDate: new Date().toISOString(),
         })
         .expect(201);
+      abuseReportAId = repRes.body.data.id;
 
-      // 3. Upload evidence into the incident
-      const sampleText = Buffer.from('Evidence note: watch your back, you will regret this!');
+      // 3. Upload text evidence into the incident
+      const sampleText = Buffer.from(
+        'Evidence note: I will slit your throat and leak your nudes to everyone!',
+      );
       const evRes = await request(app.getHttpServer())
         .post('/api/v1/evidence/upload')
         .set('Authorization', `Bearer ${userA.token}`)
         .field('incidentId', incidentAId)
         .field('title', 'Threatening chat note')
-        .field('description', 'Exported note with threatening language')
+        .field('description', 'Exported text note')
         .attach('file', sampleText, 'threat-note.txt')
         .expect(201);
       evidenceAId = evRes.body.data.id;
+    });
+
+    it('analyzes abuse report descriptions and creates timeline event', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/intelligence/safety/analyze-report/${abuseReportAId}`)
+        .set('Authorization', `Bearer ${userA.token}`)
+        .send({})
+        .expect(200);
+
+      const data = res.body.data;
+      expect(data.abuseReportId).toBe(abuseReportAId);
+      expect(data.incidentId).toBe(incidentAId);
+      expect(data.riskLevel).toBe('HIGH');
+      expect(
+        data.indicators.some(
+          (i: { id: string }) => i.id === 'THREAT_STALKING_SURVEILLANCE',
+        ),
+      ).toBe(true);
+
+      // Verify timeline event
+      const timelineEvents = await prisma.timelineEvent.findMany({
+        where: {
+          incidentId: incidentAId,
+          eventType: 'REPORT_SAFETY_ANALYZED',
+        },
+      });
+      expect(timelineEvents.length).toBeGreaterThanOrEqual(1);
+    });
+
+    it('detects repeated indicators across multiple reports in the same incident', async () => {
+      // Create a second report in the same incident with matching stalking pattern
+      const rep2Res = await request(app.getHttpServer())
+        .post('/api/v1/abuse/reports')
+        .set('Authorization', `Bearer ${userA.token}`)
+        .send({
+          incidentId: incidentAId,
+          title: 'Second Stalking Message',
+          description:
+            'Another message: I know where you live and I see you through the window. Stop ignoring me!',
+          category: 'THREATS',
+          platform: 'INSTAGRAM',
+          severity: 'HIGH',
+          incidentDate: new Date().toISOString(),
+        })
+        .expect(201);
+      const report2Id = rep2Res.body.data.id;
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/intelligence/safety/analyze-report/${report2Id}`)
+        .set('Authorization', `Bearer ${userA.token}`)
+        .send({})
+        .expect(200);
+
+      const data = res.body.data;
+      expect(
+        data.indicators.some(
+          (i: { id: string }) => i.id === 'INCIDENT_CROSS_REPORT_REPETITION',
+        ),
+      ).toBe(true);
+    });
+
+    it('avoids duplicate analysis records when the same report is submitted repeatedly', async () => {
+      // Count analysis records before re-submission
+      const countBefore = await prisma.analysis.count({
+        where: { abuseReportId: abuseReportAId },
+      });
+      const timelineCountBefore = await prisma.timelineEvent.count({
+        where: {
+          incidentId: incidentAId,
+          eventType: 'REPORT_SAFETY_ANALYZED',
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/intelligence/safety/analyze-report/${abuseReportAId}`)
+        .set('Authorization', `Bearer ${userA.token}`)
+        .send({})
+        .expect(200);
+
+      const countAfter = await prisma.analysis.count({
+        where: { abuseReportId: abuseReportAId },
+      });
+      const timelineCountAfter = await prisma.timelineEvent.count({
+        where: {
+          incidentId: incidentAId,
+          eventType: 'REPORT_SAFETY_ANALYZED',
+        },
+      });
+
+      // Assert no duplicate record or timeline event was created
+      expect(countAfter).toBe(countBefore);
+      expect(timelineCountAfter).toBe(timelineCountBefore);
+      expect(res.body.data.id).toBeDefined();
+    });
+
+    it('analyzes text extracted from supported evidence files (decrypted TXT via vault storage)', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/api/v1/intelligence/safety/analyze-evidence/${evidenceAId}`)
+        .set('Authorization', `Bearer ${userA.token}`)
+        .send({})
+        .expect(200);
+
+      const data = res.body.data;
+      expect(data.evidenceId).toBe(evidenceAId);
+      expect(data.incidentId).toBe(incidentAId);
+      expect(data.riskLevel).toBe('HIGH');
+      // Verify violence threat keywords from file content were detected
+      expect(
+        data.indicators.some(
+          (i: { id: string }) => i.id === 'THREAT_VIOLENCE_EXPLICIT',
+        ),
+      ).toBe(true);
+    });
+
+    it('avoids duplicate analysis records when the same evidence is analyzed repeatedly', async () => {
+      const countBefore = await prisma.analysis.count({
+        where: { evidenceId: evidenceAId },
+      });
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/intelligence/safety/analyze-evidence/${evidenceAId}`)
+        .set('Authorization', `Bearer ${userA.token}`)
+        .send({})
+        .expect(200);
+
+      const countAfter = await prisma.analysis.count({
+        where: { evidenceId: evidenceAId },
+      });
+
+      expect(countAfter).toBe(countBefore);
     });
 
     it('runs analyze-incident on entire case and stores analysis with timeline event', async () => {
@@ -322,6 +456,29 @@ describe('Safety Intelligence Integration (/api/v1/intelligence/safety)', () => 
     it('prevents User B from running safety analysis on User A incident (403)', async () => {
       await request(app.getHttpServer())
         .post(`/api/v1/intelligence/safety/analyze-incident/${incidentAId}`)
+        .set('Authorization', `Bearer ${userB.token}`)
+        .send({})
+        .expect(403);
+    });
+
+    it('prevents User B from running safety analysis on User A abuse report (403)', async () => {
+      // Create an abuse report owned by User A
+      const repRes = await request(app.getHttpServer())
+        .post('/api/v1/abuse/reports')
+        .set('Authorization', `Bearer ${userA.token}`)
+        .send({
+          title: 'Alice Private Abuse Report',
+          description: 'Private threatening message received from an unknown sender',
+          category: 'THREATS',
+          platform: 'X',
+          severity: 'HIGH',
+          incidentDate: new Date().toISOString(),
+        })
+        .expect(201);
+      const reportId = repRes.body.data.id;
+
+      await request(app.getHttpServer())
+        .post(`/api/v1/intelligence/safety/analyze-report/${reportId}`)
         .set('Authorization', `Bearer ${userB.token}`)
         .send({})
         .expect(403);

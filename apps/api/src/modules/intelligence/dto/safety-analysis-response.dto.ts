@@ -145,6 +145,9 @@ export class SafetyAnalysisResponseDto {
   @ApiPropertyOptional({ example: '8fa85f64-5717-4562-b3fc-2c963f66afa6' })
   evidenceId?: string | null;
 
+  @ApiPropertyOptional({ example: '7fa85f64-5717-4562-b3fc-2c963f66afa6' })
+  abuseReportId?: string | null;
+
   @ApiProperty({ type: SafetyAnalysisMetricsDto })
   metrics!: SafetyAnalysisMetricsDto;
 

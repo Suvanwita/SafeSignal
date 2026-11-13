@@ -217,6 +217,7 @@ export interface SafetyAnalysisResult {
   disclaimer: string;
   incidentId?: string | null;
   evidenceId?: string | null;
+  abuseReportId?: string | null;
   metrics: SafetyAnalysisMetrics;
   analyzedAt: string;
   createdAt?: string;
@@ -226,6 +227,7 @@ export interface AnalyzeSafetyTextInput {
   text: string;
   incidentId?: string;
   evidenceId?: string;
+  abuseReportId?: string;
   persist?: boolean;
   customAbuseKeywords?: string[];
   customThreatKeywords?: string[];

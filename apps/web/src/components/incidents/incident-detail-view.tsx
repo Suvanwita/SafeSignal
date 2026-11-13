@@ -82,7 +82,15 @@ import {
   getFileFormatCategory,
   type VerifyEvidenceResult,
 } from '@/lib/evidence/types';
-import type { SuspiciousProfile } from '@/lib/intelligence/types';
+import { SafetyAnalysisCard } from '@/components/intelligence/safety-analysis-card';
+import {
+  analyzeIncidentSafety,
+  fetchSafetyAnalyses,
+} from '@/lib/intelligence/client-intelligence';
+import type {
+  SafetyAnalysisResult,
+  SuspiciousProfile,
+} from '@/lib/intelligence/types';
 
 export interface IncidentDetailViewProps {
   user: AuthUser;
@@ -154,6 +162,56 @@ export function IncidentDetailView({
   // Evidence Vault Dialog & State
   const [uploadEvidenceDialogOpen, setUploadEvidenceDialogOpen] = React.useState(false);
   const [copiedShaId, setCopiedShaId] = React.useState<string | null>(null);
+
+  // Safety Intelligence State
+  const [safetyAnalyses, setSafetyAnalyses] = React.useState<
+    SafetyAnalysisResult[]
+  >([]);
+  const [currentSafetyAnalysis, setCurrentSafetyAnalysis] =
+    React.useState<SafetyAnalysisResult | null>(null);
+  const [isAnalyzingSafety, setIsAnalyzingSafety] = React.useState(false);
+
+  const loadSafetyAnalyses = React.useCallback(async () => {
+    try {
+      const list = await fetchSafetyAnalyses({ incidentId: incident.id });
+      setSafetyAnalyses(list);
+      if (list.length > 0) {
+        setCurrentSafetyAnalysis(list[0]);
+      }
+    } catch {
+      // non-fatal
+    }
+  }, [incident.id]);
+
+  React.useEffect(() => {
+    loadSafetyAnalyses();
+  }, [loadSafetyAnalyses]);
+
+  const handleRunCaseSafetyAnalysis = async () => {
+    setIsAnalyzingSafety(true);
+    try {
+      const res = await analyzeIncidentSafety(incident.id);
+      setCurrentSafetyAnalysis(res);
+      setSafetyAnalyses((prev) => {
+        const withoutCurrent = prev.filter((a) => a.id !== res.id);
+        return [res, ...withoutCurrent];
+      });
+      notify.verified(
+        'Case safety analysis complete',
+        `${res.riskLevel} Risk level determined (${res.category}).`,
+      );
+      // Refresh incident details to load newly created timeline event
+      refreshIncident();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to complete case safety analysis.';
+      notify.alert('Analysis failed', msg);
+    } finally {
+      setIsAnalyzingSafety(false);
+    }
+  };
 
   // Evidence Verification Dialog & State
   const [verifyingEvidenceId, setVerifyingEvidenceId] = React.useState<string | null>(null);
@@ -487,6 +545,19 @@ export function IncidentDetailView({
             </div>
           </CardContent>
         </Card>
+
+        {/* CASE SAFETY INTELLIGENCE */}
+        <SafetyAnalysisCard
+          title="Case Safety Intelligence & Threat Assessment"
+          description="Evaluates all linked abuse reports, suspicious profiles, and evidence records within this incident case to determine aggregated risk and cross-report repetition."
+          analyses={safetyAnalyses}
+          currentAnalysis={currentSafetyAnalysis}
+          onSelectAnalysis={setCurrentSafetyAnalysis}
+          isAnalyzing={isAnalyzingSafety}
+          onRunAnalysis={handleRunCaseSafetyAnalysis}
+          buttonText="Evaluate Case Safety"
+          targetType="incident"
+        />
 
         {/* SECTION 1: RELATED SUSPICIOUS PROFILES */}
         <Card className="border-slate-200">

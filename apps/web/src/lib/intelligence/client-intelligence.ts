@@ -118,6 +118,19 @@ export async function analyzeSafetyText(
   return payload.analysis;
 }
 
+export async function analyzeAbuseReportSafety(
+  abuseReportId: string,
+): Promise<SafetyAnalysisResult> {
+  const payload = await requestIntelligenceJson<{
+    analysis: SafetyAnalysisResult;
+  }>(
+    `/api/intelligence/safety/analyze-report/${encodeURIComponent(abuseReportId)}`,
+    'POST',
+    {},
+  );
+  return payload.analysis;
+}
+
 export async function analyzeIncidentSafety(
   incidentId: string,
 ): Promise<SafetyAnalysisResult> {
@@ -148,6 +161,7 @@ export async function fetchSafetyAnalyses(
   query: {
     incidentId?: string;
     evidenceId?: string;
+    abuseReportId?: string;
     riskLevel?: string;
     category?: string;
   } = {},
@@ -155,6 +169,7 @@ export async function fetchSafetyAnalyses(
   const params = new URLSearchParams();
   if (query.incidentId) params.set('incidentId', query.incidentId);
   if (query.evidenceId) params.set('evidenceId', query.evidenceId);
+  if (query.abuseReportId) params.set('abuseReportId', query.abuseReportId);
   if (query.riskLevel) params.set('riskLevel', query.riskLevel);
   if (query.category) params.set('category', query.category);
 

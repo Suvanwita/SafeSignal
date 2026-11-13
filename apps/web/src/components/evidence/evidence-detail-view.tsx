@@ -63,6 +63,12 @@ import {
   type EvidenceRecord,
   type VerifyEvidenceResult,
 } from '@/lib/evidence/types';
+import { SafetyAnalysisCard } from '@/components/intelligence/safety-analysis-card';
+import {
+  analyzeEvidenceSafety,
+  fetchSafetyAnalyses,
+} from '@/lib/intelligence/client-intelligence';
+import type { SafetyAnalysisResult } from '@/lib/intelligence/types';
 import { VerifyEvidenceDialog } from './verify-evidence-dialog';
 
 export interface EvidenceDetailViewProps {
@@ -119,6 +125,55 @@ export function EvidenceDetailView({
   const [isGeneratingToken, setIsGeneratingToken] =
     React.useState<boolean>(false);
   const [copiedToken, setCopiedToken] = React.useState<boolean>(false);
+
+  // Safety Intelligence State
+  const [safetyAnalyses, setSafetyAnalyses] = React.useState<
+    SafetyAnalysisResult[]
+  >([]);
+  const [currentSafetyAnalysis, setCurrentSafetyAnalysis] =
+    React.useState<SafetyAnalysisResult | null>(null);
+  const [isAnalyzingSafety, setIsAnalyzingSafety] = React.useState(false);
+
+  const loadSafetyAnalyses = React.useCallback(async () => {
+    try {
+      const list = await fetchSafetyAnalyses({ evidenceId: evidence.id });
+      setSafetyAnalyses(list);
+      if (list.length > 0) {
+        setCurrentSafetyAnalysis(list[0]);
+      }
+    } catch {
+      // non-fatal
+    }
+  }, [evidence.id]);
+
+  React.useEffect(() => {
+    loadSafetyAnalyses();
+  }, [loadSafetyAnalyses]);
+
+  const handleRunEvidenceSafetyAnalysis = async () => {
+    setIsAnalyzingSafety(true);
+    try {
+      const res = await analyzeEvidenceSafety(evidence.id);
+      setCurrentSafetyAnalysis(res);
+      setSafetyAnalyses((prev) => {
+        const withoutCurrent = prev.filter((a) => a.id !== res.id);
+        return [res, ...withoutCurrent];
+      });
+      notify.verified(
+        'Evidence safety analysis complete',
+        `${res.riskLevel} Risk level determined (${res.category}).`,
+      );
+      loadAuditLogs();
+    } catch (err: unknown) {
+      const msg =
+        err instanceof Error
+          ? err.message
+          : 'Unable to complete evidence safety analysis.';
+      notify.alert(msg);
+    } finally {
+      setIsAnalyzingSafety(false);
+    }
+  };
 
   const loadAuditLogs = React.useCallback(async () => {
     setIsLoadingAudit(true);
@@ -524,6 +579,19 @@ export function EvidenceDetailView({
             </p>
           </CardContent>
         </Card>
+
+        {/* EVIDENCE SAFETY INTELLIGENCE */}
+        <SafetyAnalysisCard
+          title="Evidence Content Safety Intelligence"
+          description="Evaluates custody notes, extracted text files, and metadata samples for threats, abusive harassment, and sensitive personal information (PII/SPI)."
+          analyses={safetyAnalyses}
+          currentAnalysis={currentSafetyAnalysis}
+          onSelectAnalysis={setCurrentSafetyAnalysis}
+          isAnalyzing={isAnalyzingSafety}
+          onRunAnalysis={handleRunEvidenceSafetyAnalysis}
+          buttonText="Evaluate Content Safety"
+          targetType="evidence"
+        />
 
         {/* TWO-COLUMN METADATA SECTION */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

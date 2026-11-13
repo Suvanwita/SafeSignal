@@ -244,6 +244,7 @@ model AbuseReport {
   incident          Incident?          @relation(fields: [incidentId], references: [id], onDelete: SetNull)
   suspiciousProfile SuspiciousProfile? @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
   evidence          Evidence[]
+  analyses          Analysis[]
 
   @@index([userId])
   @@index([userId, category])
@@ -314,6 +315,8 @@ model Analysis {
   officialAccountId   String?      @db.Uuid
   suspiciousProfileId String?      @db.Uuid
   evidenceId          String?      @db.Uuid
+  abuseReportId       String?      @db.Uuid
+  contentHash         String?
   type                AnalysisType
   summary             String?
   confidence          Float?
@@ -326,6 +329,7 @@ model Analysis {
   officialAccount   OfficialAccount?   @relation(fields: [officialAccountId], references: [id], onDelete: SetNull)
   suspiciousProfile SuspiciousProfile? @relation(fields: [suspiciousProfileId], references: [id], onDelete: SetNull)
   evidence          Evidence?          @relation(fields: [evidenceId], references: [id], onDelete: SetNull)
+  abuseReport       AbuseReport?       @relation(fields: [abuseReportId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([incidentId])
@@ -333,6 +337,8 @@ model Analysis {
   @@index([officialAccountId])
   @@index([suspiciousProfileId])
   @@index([evidenceId])
+  @@index([abuseReportId])
+  @@index([userId, contentHash])
   @@map("analyses")
 }
 

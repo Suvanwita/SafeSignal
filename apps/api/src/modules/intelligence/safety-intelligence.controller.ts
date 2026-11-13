@@ -49,6 +49,27 @@ export class SafetyIntelligenceController {
     return this.safetyIntelligenceService.analyzeTextForUser(userId, dto);
   }
 
+  @Post('analyze-report/:abuseReportId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Analyze abuse report descriptions and cross-check repeated patterns within the incident',
+  })
+  @ApiOkResponse({ type: SafetyAnalysisResponseDto })
+  @ApiNotFoundResponse({ description: 'Abuse report not found' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  analyzeReport(
+    @CurrentUser('id') userId: string,
+    @Param('abuseReportId', ParseUUIDPipe) abuseReportId: string,
+    @Body() dto?: Partial<AnalyzeSafetyTextDto>,
+  ): Promise<SafetyAnalysisResponseDto> {
+    return this.safetyIntelligenceService.analyzeAbuseReportForUser(
+      userId,
+      abuseReportId,
+      dto,
+    );
+  }
+
   @Post('analyze-incident/:incidentId')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
