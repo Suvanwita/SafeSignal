@@ -2,7 +2,8 @@ import type { NextRequest } from 'next/server';
 import { proxyBackendRequest } from '@/lib/auth/backend-proxy';
 
 export async function GET(request: NextRequest) {
-  return proxyBackendRequest(request, '/incidents', {
+  const search = request.nextUrl.search;
+  return proxyBackendRequest(request, `/incidents${search}`, {
     method: 'GET',
     wrapDataKey: 'incidents',
     fallbackErrorCode: 'INCIDENTS_REQUEST_FAILED',

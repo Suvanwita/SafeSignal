@@ -78,20 +78,9 @@ function SidebarContent({
                   <li key={item.id}>
                     <Link
                       href={item.href}
-                      onClick={(event) => {
+                      onClick={() => {
                         if (onNavigate) {
                           onNavigate(item);
-                        }
-                        if (
-                          item.href !== '/dashboard' &&
-                          item.href !== '/incidents' &&
-                          item.href !== '/identity' &&
-                          item.href !== '/intelligence' &&
-                          item.href !== '/abuse' &&
-                          item.href !== '/evidence' &&
-                          item.href !== '/'
-                        ) {
-                          event.preventDefault();
                         }
                       }}
                       aria-current={isActive ? 'page' : undefined}

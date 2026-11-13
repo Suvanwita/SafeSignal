@@ -181,7 +181,7 @@ export async function fetchEvidence(
   }
 
   const payload = await res.json();
-  return payload.data || [];
+  return Array.isArray(payload) ? payload : (payload.data || []);
 }
 
 export async function deleteEvidence(
@@ -205,7 +205,7 @@ export async function deleteEvidence(
   }
 
   const payload = await res.json();
-  return payload.data;
+  return payload.data ?? payload;
 }
 
 export async function verifyEvidence(id: string): Promise<VerifyEvidenceResult> {
@@ -227,7 +227,7 @@ export async function verifyEvidence(id: string): Promise<VerifyEvidenceResult> 
   }
 
   const payload = await res.json();
-  return payload.data;
+  return (payload.data ?? payload) as VerifyEvidenceResult;
 }
 
 export async function fetchEvidenceMetadata(
@@ -248,7 +248,7 @@ export async function fetchEvidenceMetadata(
   }
 
   const payload = await res.json();
-  return payload.data ?? null;
+  return (payload.data ?? payload) ?? null;
 }
 
 export async function requestEvidenceDownloadToken(
