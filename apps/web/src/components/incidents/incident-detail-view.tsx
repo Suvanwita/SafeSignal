@@ -490,6 +490,195 @@ export function IncidentDetailView({
       }
     >
       <div className="space-y-6">
+        {/* Executive Case Status Banner */}
+        {incident.status === 'ESCALATED' ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-red-900 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-red-100 text-red-700">
+                <AlertOctagon className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm">Escalated Priority Case</span>
+                  <Badge variant="alert">Urgent Attention</Badge>
+                </div>
+                <p className="mt-0.5 text-xs text-red-700">
+                  This safety incident has been escalated. Active platform intervention, counter-evidence preservation, and priority review are recommended.
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setStatusDialogOpen(true)}
+              className="border-red-300 bg-white text-xs font-semibold text-red-800 hover:bg-red-100"
+            >
+              Update Status & Severity
+            </Button>
+          </div>
+        ) : incident.status === 'CLOSED' ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 text-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-200 text-slate-700">
+                <CheckCircle2 className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm">Case Closed & Archived</span>
+                  <Badge variant="neutral">Archived</Badge>
+                </div>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  This incident case has been resolved and archived. All historical evidence and timeline events remain cryptographically verified and immutable.
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="default"
+              size="sm"
+              onClick={() => setReopenDialogOpen(true)}
+              className="text-xs"
+            >
+              Reopen Case
+            </Button>
+          </div>
+        ) : incident.status === 'RESOLVED' ? (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-900 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm">Incident Resolved</span>
+                  <Badge variant="neutral" className="bg-emerald-100 text-emerald-800 border-emerald-200">
+                    Resolved
+                  </Badge>
+                </div>
+                <p className="mt-0.5 text-xs text-emerald-700">
+                  Mitigation actions completed. You can formally close and archive the case when ready.
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCloseDialogOpen(true)}
+              className="border-emerald-300 bg-white text-xs font-semibold text-emerald-800 hover:bg-emerald-100"
+            >
+              Close & Archive Case
+            </Button>
+          </div>
+        ) : null}
+
+        {/* Executive Case Overview Cards Grid */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {/* Card 1: Status & Classification */}
+          <Card className="border-slate-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-500">
+                <span>Case Status</span>
+                <button
+                  type="button"
+                  onClick={() => setStatusDialogOpen(true)}
+                  className="text-[11px] font-semibold text-blue-600 hover:underline"
+                >
+                  Edit
+                </button>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                <StatusBadge
+                  status={statusMeta.statusBadge}
+                  label={statusMeta.label}
+                />
+                <StatusBadge
+                  status={severityMeta.statusBadge}
+                  label={`${severityMeta.label}`}
+                />
+              </div>
+              <div className="mt-2 text-xs text-slate-600">
+                Category: <span className="font-medium text-slate-800">{categoryLabel}</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Card 2: Evidence Collection */}
+          <Card className="border-slate-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-500">
+                <span>Evidence Vault</span>
+                <button
+                  type="button"
+                  onClick={() => setUploadEvidenceDialogOpen(true)}
+                  className="text-[11px] font-semibold text-blue-600 hover:underline"
+                >
+                  + Upload
+                </button>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-slate-900">
+                  {incident.evidence.length}
+                </span>
+                <span className="text-xs text-slate-500">files secured</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                {incident.evidence.filter((e) => Boolean(e.sha256)).length} hashed with SHA-256
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Card 3: Linked Abuse Reports */}
+          <Card className="border-slate-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-500">
+                <span>Linked Reports</span>
+                <button
+                  type="button"
+                  onClick={() => setLinkReportDialogOpen(true)}
+                  className="text-[11px] font-semibold text-blue-600 hover:underline"
+                >
+                  + Link
+                </button>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-slate-900">
+                  {incident.abuseReports.length}
+                </span>
+                <span className="text-xs text-slate-500">reports linked</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500">
+                Official submissions grouped under this case
+              </p>
+            </CardContent>
+          </Card>
+
+          {/* Card 4: Correlated Threat Actors */}
+          <Card className="border-slate-200">
+            <CardContent className="p-4">
+              <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-500">
+                <span>Tracked Suspects</span>
+                <button
+                  type="button"
+                  onClick={() => setLinkProfileDialogOpen(true)}
+                  className="text-[11px] font-semibold text-blue-600 hover:underline"
+                >
+                  + Associate
+                </button>
+              </div>
+              <div className="mt-2 flex items-baseline gap-2">
+                <span className="text-2xl font-bold text-slate-900">
+                  {incident.suspiciousProfiles.length}
+                </span>
+                <span className="text-xs text-slate-500">profiles linked</span>
+              </div>
+              <p className="mt-1 text-xs text-slate-500 truncate">
+                {incident.suspiciousProfiles.length > 0
+                  ? incident.suspiciousProfiles.map((p) => `@${p.handle}`).join(', ')
+                  : 'No offender profile associated'}
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Incident Summary Card */}
         <Card className="border-slate-200">
           <CardHeader className="pb-3">
@@ -504,6 +693,11 @@ export function IncidentDetailView({
                   label={`${severityMeta.label} Severity`}
                 />
                 <Badge variant="neutral">{categoryLabel}</Badge>
+                {incident.officialAccount && (
+                  <Badge variant="neutral" className="bg-blue-50 text-blue-700 border-blue-200">
+                    Target: @{incident.officialAccount.handle} ({incident.officialAccount.platform})
+                  </Badge>
+                )}
               </div>
 
               <div className="text-xs text-slate-500">
@@ -512,9 +706,13 @@ export function IncidentDetailView({
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
-            {incident.description && (
+            {incident.description ? (
               <p className="whitespace-pre-wrap text-sm text-slate-700">
                 {incident.description}
+              </p>
+            ) : (
+              <p className="text-xs italic text-slate-400">
+                No detailed narrative was provided for this incident case.
               </p>
             )}
 

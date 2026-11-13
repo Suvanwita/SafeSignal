@@ -101,6 +101,16 @@ export interface IncidentDetail extends IncidentSummary {
   timelineEvents: IncidentTimelineEvent[];
 }
 
+export interface CreateIncidentInput {
+  title: string;
+  description?: string;
+  category: AbuseCategory;
+  severity?: Severity;
+  occurredAt?: string;
+  officialAccountId?: string;
+  suspiciousProfileId?: string;
+}
+
 export const INCIDENT_STATUS_OPTIONS: {
   value: IncidentStatus;
   label: string;

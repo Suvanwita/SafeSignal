@@ -1,5 +1,6 @@
 import { AuthApiError, ensureCsrfToken } from '@/lib/auth/client-api';
 import type {
+  CreateIncidentInput,
   IncidentDetail,
   IncidentSummary,
   ListTimelineQuery,
@@ -71,7 +72,7 @@ export async function fetchIncidentById(id: string): Promise<IncidentDetail> {
 }
 
 export async function createIncident(
-  input: Record<string, unknown>,
+  input: CreateIncidentInput,
 ): Promise<IncidentDetail> {
   const res = await requestBff<{ incident: IncidentDetail }>(
     '/api/incidents',
