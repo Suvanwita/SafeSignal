@@ -3,13 +3,19 @@
 import * as React from 'react';
 import {
   AlertCircle,
+  CheckCircle2,
   FileCheck,
+  FileCode,
   FileText,
   Image as ImageIcon,
+  Info,
   Loader2,
+  Lock,
+  ShieldCheck,
   UploadCloud,
   X,
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -27,6 +33,7 @@ import { uploadEvidence } from '@/lib/evidence/client-evidence';
 import {
   ALLOWED_EVIDENCE_EXTENSIONS,
   formatBytes,
+  getFileFormatCategory,
   MAX_EVIDENCE_SIZE_BYTES,
   MAX_EVIDENCE_SIZE_MB,
   type EvidenceRecord,
@@ -62,6 +69,8 @@ export function UploadEvidenceDialog({
   const [capturedAt, setCapturedAt] = React.useState<string>('');
   const [isDragging, setIsDragging] = React.useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = React.useState<boolean>(false);
+  const [uploadProgress, setUploadProgress] = React.useState<number | null>(null);
+  const [uploadStatusText, setUploadStatusText] = React.useState<string>('');
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
 
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -85,7 +94,7 @@ export function UploadEvidenceDialog({
 
     if (!hasValidExt) {
       setErrorMsg(
-        `Unsupported file type. Please upload a PNG, JPG, PDF, TXT, or DOCX document.`,
+        `Unsupported file type "${file.name}". Please upload a PNG, JPG, PDF, TXT, or DOCX document.`,
       );
       return;
     }
@@ -104,7 +113,12 @@ export function UploadEvidenceDialog({
 
     setSelectedFile(file);
     if (!title) {
-      setTitle(file.name.replace(/\.[^/.]+$/, ''));
+      // Auto-populate title from clean filename
+      const defaultTitle = file.name
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[-_]+/g, ' ')
+        .trim();
+      setTitle(defaultTitle);
     }
   }
 
@@ -117,20 +131,30 @@ export function UploadEvidenceDialog({
 
   function handleDragOver(e: React.DragEvent) {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(true);
   }
 
   function handleDragLeave(e: React.DragEvent) {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(false);
   }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
+    e.stopPropagation();
     setIsDragging(false);
     const file = e.dataTransfer.files?.[0];
     if (file) {
       validateAndSelectFile(file);
+    }
+  }
+
+  function handleRemoveFile() {
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   }
 
@@ -149,22 +173,37 @@ export function UploadEvidenceDialog({
     }
 
     setIsSubmitting(true);
+    setUploadProgress(5);
+    setUploadStatusText('Initializing secure upload...');
+
     try {
-      const record = await uploadEvidence({
-        file: selectedFile,
-        incidentId,
-        title: title.trim() || selectedFile.name,
-        description: description.trim() || undefined,
-        sourceUrl: sourceUrl.trim() || undefined,
-        capturedAt: capturedAt || undefined,
-      });
+      const record = await uploadEvidence(
+        {
+          file: selectedFile,
+          incidentId,
+          title: title.trim() || selectedFile.name,
+          description: description.trim() || undefined,
+          sourceUrl: sourceUrl.trim() || undefined,
+          capturedAt: capturedAt || undefined,
+        },
+        (progress, status) => {
+          setUploadProgress(progress);
+          setUploadStatusText(status);
+        },
+      );
+
+      setUploadProgress(100);
+      setUploadStatusText('Evidence secured in private vault!');
 
       notify.verified(
         'Evidence vaulted securely',
-        `File "${record.fileName}" has been verified and stored in the Evidence Vault.`,
+        `File "${record.fileName}" has been fingerprinted (SHA-256) and safely encrypted.`,
       );
-      onSuccess(record);
-      onClose();
+
+      setTimeout(() => {
+        onSuccess(record);
+        onClose();
+      }, 500);
     } catch (err: unknown) {
       const msg =
         err instanceof Error
@@ -172,21 +211,31 @@ export function UploadEvidenceDialog({
           : 'Failed to upload evidence file to vault.';
       setErrorMsg(msg);
       notify.alert('Vault upload failed', msg);
+      setUploadProgress(null);
+      setUploadStatusText('');
     } finally {
       setIsSubmitting(false);
     }
   }
 
+  const detectedFormat = selectedFile
+    ? getFileFormatCategory(selectedFile.name, selectedFile.type)
+    : null;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm">
-      <Card className="max-h-[90vh] w-full max-w-xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-sm animate-in fade-in duration-150">
+      <Card className="max-h-[92vh] w-full max-w-xl overflow-y-auto border-slate-200 bg-white shadow-2xl">
         <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 pb-4">
           <div>
-            <CardTitle className="text-lg font-bold text-slate-900">
-              Upload Vault Evidence
-            </CardTitle>
-            <CardDescription className="text-xs text-slate-500">
-              Files are cryptographically hashed (SHA-256) and stored in private vault storage.
+            <div className="flex items-center gap-2">
+              <Lock className="h-4 w-4 text-slate-500" />
+              <CardTitle className="text-lg font-bold text-slate-900">
+                Upload Evidence to Vault
+              </CardTitle>
+            </div>
+            <CardDescription className="text-xs text-slate-500 mt-0.5">
+              Files are hashed with SHA-256 upon arrival and stored in private
+              vault storage outside the web directory.
             </CardDescription>
           </div>
           <Button
@@ -209,22 +258,28 @@ export function UploadEvidenceDialog({
               </div>
             )}
 
-            {/* Drag & Drop File Zone */}
+            {/* DRAG & DROP FILE ZONE */}
             <div>
-              <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-700">
-                Evidence Document / Image <span className="text-red-500">*</span>
-              </label>
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-700">
+                  Evidence File <span className="text-red-500">*</span>
+                </label>
+                <span className="text-[11px] text-slate-400">
+                  Max size: {MAX_EVIDENCE_SIZE_MB}MB
+                </span>
+              </div>
+
               <div
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-                className={`flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-6 text-center transition-colors ${
+                onClick={() => !selectedFile && fileInputRef.current?.click()}
+                className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 text-center transition-all ${
                   isDragging
-                    ? 'border-blue-500 bg-blue-50/50'
+                    ? 'border-blue-500 bg-blue-50/70 scale-[1.01]'
                     : selectedFile
                       ? 'border-emerald-300 bg-emerald-50/30'
-                      : 'border-slate-300 bg-slate-50/50 hover:bg-slate-100/60'
+                      : 'border-slate-300 bg-slate-50/60 hover:border-slate-400 hover:bg-slate-100/60 cursor-pointer'
                 }`}
               >
                 <input
@@ -233,46 +288,110 @@ export function UploadEvidenceDialog({
                   accept=".png,.jpg,.jpeg,.pdf,.txt,.docx"
                   onChange={handleFileInputChange}
                   className="hidden"
+                  disabled={isSubmitting}
                 />
 
                 {selectedFile ? (
-                  <div className="flex flex-col items-center">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
-                      <FileCheck className="h-6 w-6" />
+                  <div className="flex w-full items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 truncate">
+                      <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-emerald-200 bg-emerald-100 text-emerald-700">
+                        {detectedFormat === 'PNG' || detectedFormat === 'JPG' ? (
+                          <ImageIcon className="h-5 w-5" />
+                        ) : detectedFormat === 'PDF' ? (
+                          <FileText className="h-5 w-5" />
+                        ) : (
+                          <FileCode className="h-5 w-5" />
+                        )}
+                      </div>
+                      <div className="text-left truncate">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-semibold text-slate-900">
+                            {selectedFile.name}
+                          </p>
+                          <Badge
+                            variant="neutral"
+                            className="text-[10px] font-bold py-0 px-1.5"
+                          >
+                            {detectedFormat}
+                          </Badge>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {formatBytes(selectedFile.size)} • Ready for custody sealing
+                        </p>
+                      </div>
                     </div>
-                    <p className="mt-2 text-sm font-semibold text-slate-900">
-                      {selectedFile.name}
-                    </p>
-                    <p className="text-xs text-slate-500">
-                      {formatBytes(selectedFile.size)} • Click or drop another to replace
-                    </p>
+
+                    {!isSubmitting && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleRemoveFile}
+                        className="h-8 text-xs text-slate-500 hover:text-red-600 hover:bg-red-50"
+                        title="Remove file"
+                      >
+                        Change
+                      </Button>
+                    )}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+                    <div
+                      className={`flex h-12 w-12 items-center justify-center rounded-full transition-colors ${
+                        isDragging
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-blue-50 text-blue-600'
+                      }`}
+                    >
                       <UploadCloud className="h-6 w-6" />
                     </div>
-                    <p className="mt-2 text-sm font-semibold text-slate-800">
-                      Click to browse or drag and drop file here
+                    <p className="mt-2.5 text-sm font-semibold text-slate-800">
+                      Drag & drop your evidence file here, or{' '}
+                      <span className="text-blue-600 underline">browse</span>
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      PNG, JPG, PDF, TXT, DOCX (Max {MAX_EVIDENCE_SIZE_MB}MB)
+                      Supports PNG, JPG, PDF, TXT, and DOCX documents
                     </p>
                   </div>
                 )}
               </div>
             </div>
 
-            {/* Incident Selection */}
+            {/* REAL-TIME UPLOAD PROGRESS BAR */}
+            {isSubmitting && uploadProgress !== null && (
+              <div className="space-y-1.5 rounded-lg border border-blue-200 bg-blue-50/70 p-3.5">
+                <div className="flex items-center justify-between text-xs font-semibold text-blue-900">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-600" />
+                    <span className="truncate">{uploadStatusText}</span>
+                  </div>
+                  <span className="font-mono">{uploadProgress}%</span>
+                </div>
+                <div className="h-2 w-full overflow-hidden rounded-full bg-blue-200/80">
+                  <div
+                    className="h-full bg-gradient-to-r from-blue-600 to-indigo-600 transition-all duration-200"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* INCIDENT ASSOCIATION SELECTOR */}
             {preselectedIncidentId ? (
               <input type="hidden" value={preselectedIncidentId} />
             ) : (
-              <FormField id="evidence-incident" label="Associated Incident" required>
+              <FormField
+                id="evidence-incident"
+                label="Associated Incident Case"
+                description="Link this evidence to an active safety case for correlation and custody tracking"
+                required
+              >
                 {incidents.length > 0 ? (
                   <select
                     id="evidence-incident"
                     value={incidentId}
                     onChange={(e) => setIncidentId(e.target.value)}
+                    disabled={isSubmitting}
                     className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-slate-900 focus:outline-none"
                     required
                   >
@@ -283,22 +402,30 @@ export function UploadEvidenceDialog({
                     ))}
                   </select>
                 ) : (
-                  <Input
-                    id="evidence-incident"
-                    placeholder="Enter Incident UUID"
-                    value={incidentId}
-                    onChange={(e) => setIncidentId(e.target.value)}
-                    required
-                  />
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800">
+                    <p className="font-semibold">No incidents found</p>
+                    <p className="mt-0.5">
+                      Please enter a target Incident UUID below or create an incident first.
+                    </p>
+                    <Input
+                      id="evidence-incident"
+                      placeholder="e.g. 123e4567-e89b-12d3-a456-426614174000"
+                      value={incidentId}
+                      onChange={(e) => setIncidentId(e.target.value)}
+                      disabled={isSubmitting}
+                      className="mt-2 bg-white"
+                      required
+                    />
+                  </div>
                 )}
               </FormField>
             )}
 
-            {/* Title */}
+            {/* TITLE */}
             <FormField
               id="evidence-title"
               label="Evidence Title / Label"
-              description="Descriptive name for audit and legal records"
+              description="A clear human-readable title for audit records and legal discovery"
             >
               <Input
                 id="evidence-title"
@@ -306,50 +433,70 @@ export function UploadEvidenceDialog({
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 maxLength={100}
+                disabled={isSubmitting}
               />
             </FormField>
 
-            {/* Description */}
+            {/* DESCRIPTION */}
             <FormField
               id="evidence-desc"
-              label="Description / Context"
-              description="Describe where, when, and how this evidence was collected"
+              label="Description & Custody Notes"
+              description="Document context, account handles, chat platform, or preservation details"
             >
               <Textarea
                 id="evidence-desc"
-                placeholder="Provide contextual details, timestamps or relevant background notes..."
+                placeholder="Captured from victim's direct inbox on X / Twitter following persistent threats..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                rows={3}
+                rows={2}
                 maxLength={500}
+                disabled={isSubmitting}
               />
             </FormField>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {/* Source URL */}
-              <FormField id="evidence-url" label="Source URL" description="Optional web link">
+              {/* SOURCE URL */}
+              <FormField
+                id="evidence-url"
+                label="Source URL"
+                description="Link to original post, profile, or web page"
+              >
                 <Input
                   id="evidence-url"
                   placeholder="https://..."
                   value={sourceUrl}
                   onChange={(e) => setSourceUrl(e.target.value)}
                   type="url"
+                  disabled={isSubmitting}
                 />
               </FormField>
 
-              {/* Captured At */}
+              {/* CAPTURED AT */}
               <FormField
                 id="evidence-captured"
-                label="Date Captured"
-                description="Original timestamp of capture"
+                label="Date of Incident / Capture"
+                description="When the incident or screenshot occurred"
               >
                 <Input
                   id="evidence-captured"
                   type="datetime-local"
                   value={capturedAt}
                   onChange={(e) => setCapturedAt(e.target.value)}
+                  disabled={isSubmitting}
                 />
               </FormField>
+            </div>
+
+            {/* PRIVACY & SECURITY ASSURANCE */}
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+              <div className="flex items-start gap-2">
+                <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+                <p className="leading-relaxed">
+                  <strong>Safe Custody Guarantee:</strong> Evidence is never rendered
+                  as raw untrusted HTML or stored in public web paths. Technical metadata
+                  is extracted safely with precise GPS coordinates redacted for privacy.
+                </p>
+              </div>
             </div>
           </CardContent>
 
@@ -370,12 +517,12 @@ export function UploadEvidenceDialog({
               {isSubmitting ? (
                 <>
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Storing & Verifying...
+                  Securing Evidence...
                 </>
               ) : (
                 <>
                   <UploadCloud className="h-4 w-4" />
-                  Vault Evidence
+                  Upload & Seal Evidence
                 </>
               )}
             </Button>

@@ -1,56 +1,122 @@
 'use client';
 
 import { AuthApiError, ensureCsrfToken } from '@/lib/auth/client-api';
-import type {
-  EvidenceRecord,
-  UploadEvidenceInput,
-  VerifyEvidenceResult,
+import {
+  formatBytes,
+  type EvidenceRecord,
+  type UploadEvidenceInput,
+  type VerifyEvidenceResult,
 } from './types';
 
-export async function uploadEvidence(
+export type UploadProgressCallback = (percent: number, message: string) => void;
+
+export function uploadEvidence(
   input: UploadEvidenceInput,
+  onProgress?: UploadProgressCallback,
 ): Promise<EvidenceRecord> {
-  const csrfToken = await ensureCsrfToken();
-  const formData = new FormData();
-  formData.append('file', input.file);
-  formData.append('incidentId', input.incidentId);
+  return new Promise((resolve, reject) => {
+    ensureCsrfToken()
+      .then((csrfToken) => {
+        const formData = new FormData();
+        formData.append('file', input.file);
+        formData.append('incidentId', input.incidentId);
 
-  if (input.title && input.title.trim().length > 0) {
-    formData.append('title', input.title.trim());
-  }
-  if (input.description && input.description.trim().length > 0) {
-    formData.append('description', input.description.trim());
-  }
-  if (input.abuseReportId) {
-    formData.append('abuseReportId', input.abuseReportId);
-  }
-  if (input.sourceUrl && input.sourceUrl.trim().length > 0) {
-    formData.append('sourceUrl', input.sourceUrl.trim());
-  }
-  if (input.capturedAt) {
-    formData.append('capturedAt', input.capturedAt);
-  }
+        if (input.title && input.title.trim().length > 0) {
+          formData.append('title', input.title.trim());
+        }
+        if (input.description && input.description.trim().length > 0) {
+          formData.append('description', input.description.trim());
+        }
+        if (input.abuseReportId) {
+          formData.append('abuseReportId', input.abuseReportId);
+        }
+        if (input.sourceUrl && input.sourceUrl.trim().length > 0) {
+          formData.append('sourceUrl', input.sourceUrl.trim());
+        }
+        if (input.capturedAt) {
+          formData.append('capturedAt', input.capturedAt);
+        }
 
-  const res = await fetch('/api/evidence/upload', {
-    method: 'POST',
-    headers: {
-      'x-csrf-token': csrfToken,
-    },
-    body: formData,
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/api/evidence/upload', true);
+        xhr.setRequestHeader('x-csrf-token', csrfToken);
+        xhr.setRequestHeader('Accept', 'application/json');
+
+        onProgress?.(5, 'Preparing evidence payload...');
+
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable && event.total > 0) {
+            const uploadFraction = event.loaded / event.total;
+            const progress = Math.round(10 + uploadFraction * 70);
+            onProgress?.(
+              Math.min(progress, 80),
+              `Uploading evidence to vault (${formatBytes(event.loaded)} / ${formatBytes(event.total)})...`,
+            );
+          } else {
+            onProgress?.(45, 'Transferring file bytes...');
+          }
+        };
+
+        xhr.upload.onload = () => {
+          onProgress?.(85, 'Calculating SHA-256 fingerprint & extracting metadata...');
+        };
+
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              const payload = JSON.parse(xhr.responseText);
+              onProgress?.(100, 'Evidence verified and secured!');
+              resolve(payload.data);
+            } catch {
+              reject(
+                new AuthApiError(
+                  'Invalid JSON response from server',
+                  'INVALID_RESPONSE',
+                ),
+              );
+            }
+          } else {
+            try {
+              const errPayload = JSON.parse(xhr.responseText);
+              const msg =
+                errPayload?.error?.message ||
+                errPayload?.message ||
+                'Failed to upload evidence file.';
+              const code = errPayload?.error?.code || 'UPLOAD_FAILED';
+              reject(new AuthApiError(msg, code));
+            } catch {
+              reject(
+                new AuthApiError(
+                  `Upload request failed with status ${xhr.status}.`,
+                  'UPLOAD_FAILED',
+                ),
+              );
+            }
+          }
+        };
+
+        xhr.onerror = () => {
+          reject(
+            new AuthApiError(
+              'Network error occurred during evidence upload.',
+              'NETWORK_ERROR',
+            ),
+          );
+        };
+
+        xhr.send(formData);
+      })
+      .catch((err) => {
+        reject(
+          err instanceof Error
+            ? err
+            : new AuthApiError(
+                'Failed to initialize upload CSRF session',
+                'CSRF_FAILED',
+              ),
+        );
+      });
   });
-
-  if (!res.ok) {
-    const errPayload = await res.json().catch(() => null);
-    const msg =
-      errPayload?.error?.message ||
-      errPayload?.message ||
-      'Failed to upload evidence file.';
-    const code = errPayload?.error?.code || 'UPLOAD_FAILED';
-    throw new AuthApiError(msg, code);
-  }
-
-  const payload = await res.json();
-  return payload.data;
 }
 
 export async function fetchEvidence(

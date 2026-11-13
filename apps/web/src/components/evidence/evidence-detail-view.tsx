@@ -377,6 +377,65 @@ export function EvidenceDetailView({
               </button>
             </div>
 
+            {/* INLINE VERIFICATION STATUS VERDICT */}
+            {verifyResult ? (
+              <div
+                className={`flex items-start gap-3 rounded-lg border p-3 text-xs ${
+                  verifyResult.status === 'VERIFIED'
+                    ? 'border-emerald-200 bg-emerald-50/80 text-emerald-950'
+                    : 'border-red-200 bg-red-50/80 text-red-950'
+                }`}
+              >
+                {verifyResult.status === 'VERIFIED' ? (
+                  <ShieldCheck className="h-4 w-4 shrink-0 text-emerald-600 mt-0.5" />
+                ) : (
+                  <AlertTriangle className="h-4 w-4 shrink-0 text-red-600 mt-0.5" />
+                )}
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold">
+                      {verifyResult.status === 'VERIFIED'
+                        ? 'Integrity Verified: Byte-for-Byte Match'
+                        : 'Integrity Warning: Mismatch Detected'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setIsVerifyDialogOpen(true)}
+                      className="font-medium underline hover:text-slate-800"
+                    >
+                      Audit Details
+                    </button>
+                  </div>
+                  <p className="mt-0.5 text-[11px] opacity-90 leading-relaxed">
+                    {verifyResult.status === 'VERIFIED'
+                      ? `Recalculated SHA-256 matches stored upload hash byte-for-byte. Verified at ${formatDate(verifyResult.verifiedAt)}.`
+                      : `Stored file does not match the original hash (${verifyResult.originalHash.slice(0, 12)}... vs ${verifyResult.recalculatedHash.slice(0, 12)}...).`}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs text-slate-600">
+                <div className="flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 text-slate-400" />
+                  <span>Integrity verification has not been run in this session.</span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={handleVerify}
+                  disabled={isVerifying}
+                  className="h-7 gap-1 text-[11px] font-semibold text-blue-700 hover:text-blue-800 hover:bg-blue-50 border-blue-200"
+                >
+                  {isVerifying ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="h-3 w-3 text-blue-600" />
+                  )}
+                  Run Verification
+                </Button>
+              </div>
+            )}
+
             <p className="text-[11px] leading-relaxed text-slate-500">
               <Info className="inline h-3.5 w-3.5 text-slate-400 mr-1 -mt-0.5" />
               {EVIDENCE_INTEGRITY_DISCLAIMER}
