@@ -76,6 +76,24 @@ export class EvidenceController {
     return this.evidenceService.findOneForUser(userId, id);
   }
 
+  @Get(':id/metadata')
+  @ApiOperation({
+    summary:
+      'Get extracted structured metadata for an evidence file (restricted to owner)',
+    description:
+      'Returns technical file properties, safe image EXIF metadata (sensitive coordinates such as GPS are automatically redacted), PDF metadata, or text metrics.',
+  })
+  @ApiOkResponse({ description: 'Structured metadata JSON object' })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Ownership check failed' })
+  @ApiNotFoundResponse({ description: 'Evidence not found' })
+  getMetadata(
+    @CurrentUser('id') userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<unknown> {
+    return this.evidenceService.getMetadataForUser(userId, id);
+  }
+
   @Get(':id/download')
   @SkipResponseTransform()
   @ApiOperation({

@@ -40,6 +40,12 @@ export class EvidenceResponseDto {
   @ApiPropertyOptional({ nullable: true })
   capturedAt!: Date | null;
 
+  @ApiPropertyOptional({
+    description: 'Structured technical and format-specific metadata',
+    nullable: true,
+  })
+  metadata!: unknown | null;
+
   @ApiProperty()
   createdAt!: Date;
 

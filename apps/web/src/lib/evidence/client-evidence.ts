@@ -127,3 +127,24 @@ export async function verifyEvidence(id: string): Promise<VerifyEvidenceResult> 
   const payload = await res.json();
   return payload.data;
 }
+
+export async function fetchEvidenceMetadata(
+  id: string,
+): Promise<EvidenceRecord['metadata']> {
+  const res = await fetch(`/api/evidence/${id}/metadata`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  });
+
+  if (!res.ok) {
+    const errPayload = await res.json().catch(() => null);
+    throw new AuthApiError(
+      errPayload?.error?.message || 'Failed to fetch evidence metadata',
+      errPayload?.error?.code || 'METADATA_FETCH_FAILED',
+    );
+  }
+
+  const payload = await res.json();
+  return payload.data ?? null;
+}

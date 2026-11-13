@@ -737,7 +737,12 @@ export function IncidentDetailView({
                     return (
                       <TableRow key={ev.id}>
                         <TableCell className="font-medium text-slate-900">
-                          {ev.title}
+                          <Link
+                            href={`/evidence/${ev.id}`}
+                            className="font-medium text-slate-900 hover:text-blue-600 hover:underline block"
+                          >
+                            {ev.title}
+                          </Link>
                           {ev.description && (
                             <p className="line-clamp-1 text-xs text-slate-500">
                               {ev.description}
@@ -798,6 +803,13 @@ export function IncidentDetailView({
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            <Link
+                              href={`/evidence/${ev.id}`}
+                              className="inline-flex h-7 items-center justify-center rounded-md border border-slate-200 bg-white px-2 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900"
+                              title="View metadata and evidence details"
+                            >
+                              Details
+                            </Link>
                             <Button
                               variant="outline"
                               size="sm"

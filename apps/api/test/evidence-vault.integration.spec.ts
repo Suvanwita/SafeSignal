@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AbuseCategory, Severity } from '@prisma/client';
+import { PDFDocument } from 'pdf-lib';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { createGlobalValidationPipe } from '../src/common';
@@ -718,6 +719,231 @@ describe('Evidence Vault Integration (/api/v1/evidence)', () => {
         .post(`/api/v1/evidence/${aliceEvidenceId}/verify`)
         .set('Authorization', `Bearer ${userBob.accessToken}`)
         .expect(403);
+    });
+  });
+
+  describe('Evidence Metadata Extraction & Privacy Protection', () => {
+    it('extracts PNG dimensions, bit depth, aspect ratio and exposes it via GET /metadata and GET /:id', async () => {
+      const user = await registerUser('png-meta-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Metadata PNG Incident',
+          category: AbuseCategory.HARASSMENT,
+          severity: Severity.MEDIUM,
+        })
+        .expect(201);
+      const incidentId = incRes.body.data.id;
+
+      // Construct valid PNG with 1920x1080 dimensions in IHDR
+      const ihdrPayload = Buffer.alloc(13);
+      ihdrPayload.writeUInt32BE(1920, 0); // width
+      ihdrPayload.writeUInt32BE(1080, 4); // height
+      ihdrPayload.writeUInt8(8, 8); // bit depth 8
+      ihdrPayload.writeUInt8(6, 9); // RGBA
+
+      const pngBuffer = Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        Buffer.from([0x00, 0x00, 0x00, 0x0d]),
+        Buffer.from('IHDR', 'ascii'),
+        ihdrPayload,
+        Buffer.from([0x00, 0x00, 0x00, 0x00]),
+      ]);
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incidentId)
+        .field('title', 'High-res screenshot')
+        .attach('file', pngBuffer, 'screenshot.png')
+        .expect(201);
+
+      const evidenceId = uploadRes.body.data.id;
+      expect(uploadRes.body.data.metadata).toBeDefined();
+      expect(uploadRes.body.data.metadata.image.width).toBe(1920);
+      expect(uploadRes.body.data.metadata.image.height).toBe(1080);
+      expect(uploadRes.body.data.metadata.image.aspectRatio).toBe('16:9');
+      expect(uploadRes.body.data.metadata.image.bitDepth).toBe(8);
+
+      // Verify dedicated /metadata endpoint
+      const metaRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/metadata`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(metaRes.body.data.file.fileName).toBe('screenshot.png');
+      expect(metaRes.body.data.file.mimeType).toBe('image/png');
+      expect(metaRes.body.data.image.width).toBe(1920);
+      expect(metaRes.body.data.image.height).toBe(1080);
+
+      // Verify PostgreSQL persistence in Json column
+      const dbRecord = await prisma.evidence.findUniqueOrThrow({
+        where: { id: evidenceId },
+      });
+      expect(dbRecord.metadata).toBeDefined();
+      expect((dbRecord.metadata as any).image.width).toBe(1920);
+    });
+
+    it('extracts PDF metadata (title, author, pageCount) and text properties', async () => {
+      const user = await registerUser('pdf-meta-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'PDF Legal Evidence Incident',
+          category: AbuseCategory.THREATS,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+      const incidentId = incRes.body.data.id;
+
+      const pdfDoc = await PDFDocument.create();
+      pdfDoc.setTitle('Affidavit of Threat Evidence');
+      pdfDoc.setAuthor('Detective Safety');
+      pdfDoc.setSubject('Criminal Extortion Investigation');
+      pdfDoc.addPage([612, 792]);
+      pdfDoc.addPage([612, 792]);
+      pdfDoc.addPage([612, 792]);
+      const pdfBytes = Buffer.from(await pdfDoc.save());
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incidentId)
+        .field('title', 'Sworn Affidavit')
+        .attach('file', pdfBytes, 'affidavit.pdf')
+        .expect(201);
+
+      const evidenceId = uploadRes.body.data.id;
+      expect(uploadRes.body.data.metadata.pdf.title).toBe(
+        'Affidavit of Threat Evidence',
+      );
+      expect(uploadRes.body.data.metadata.pdf.author).toBe('Detective Safety');
+      expect(uploadRes.body.data.metadata.pdf.pageCount).toBe(3);
+
+      const metaRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/metadata`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(metaRes.body.data.pdf.title).toBe('Affidavit of Threat Evidence');
+      expect(metaRes.body.data.pdf.pageCount).toBe(3);
+    });
+
+    it('extracts text file metrics (lineCount, wordCount, characterCount)', async () => {
+      const user = await registerUser('txt-meta-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Text Audit Incident',
+          category: AbuseCategory.UNWANTED_CONTACT,
+          severity: Severity.LOW,
+        })
+        .expect(201);
+      const incidentId = incRes.body.data.id;
+
+      const txt = 'Line one threat note\nLine two persistent unwanted contact\nLine three evidence cataloged';
+      const txtBuffer = Buffer.from(txt, 'utf-8');
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incidentId)
+        .field('title', 'Unwanted contact transcript')
+        .attach('file', txtBuffer, 'chat_log.txt')
+        .expect(201);
+
+      expect(uploadRes.body.data.metadata.text.lineCount).toBe(3);
+      expect(uploadRes.body.data.metadata.text.wordCount).toBe(13);
+      expect(uploadRes.body.data.metadata.text.characterCount).toBe(txt.length);
+    });
+
+    it('enforces ownership restrictions on GET /api/v1/evidence/:id/metadata (403 for non-owners)', async () => {
+      const alice = await registerUser('alice-meta-owner');
+      const bob = await registerUser('bob-meta-intruder');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${alice.accessToken}`)
+        .send({
+          title: 'Alice Private Incident',
+          category: AbuseCategory.PRIVACY_VIOLATION,
+          severity: Severity.MEDIUM,
+        })
+        .expect(201);
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${alice.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', Buffer.from('Confidential log bytes'), 'confidential.txt')
+        .expect(201);
+      const evidenceId = uploadRes.body.data.id;
+
+      // Bob attempts to read metadata of Alice's evidence
+      const forbiddenRes = await request(app.getHttpServer())
+        .get(`/api/v1/evidence/${evidenceId}/metadata`)
+        .set('Authorization', `Bearer ${bob.accessToken}`)
+        .expect(403);
+
+      expect(forbiddenRes.body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('guarantees metadata extraction does not modify original file bytes or tamper with SHA-256 integrity', async () => {
+      const user = await registerUser('integrity-check-user');
+
+      const incRes = await request(app.getHttpServer())
+        .post('/api/v1/incidents')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .send({
+          title: 'Tamper-free Extraction Incident',
+          category: AbuseCategory.HARASSMENT,
+          severity: Severity.HIGH,
+        })
+        .expect(201);
+
+      const sampleJpeg = Buffer.concat([
+        Buffer.from([0xff, 0xd8]), // SOI
+        Buffer.from([
+          0xff, 0xc0, 0x00, 0x11, 0x08, 0x02, 0x80, 0x03, 0xc0, 0x03, 0x01,
+          0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01,
+        ]), // SOF0: 640x960
+        Buffer.from([0xff, 0xd9]), // EOI
+      ]);
+
+      const expectedSha256 = crypto.createHash('sha256').update(sampleJpeg).digest('hex');
+
+      const uploadRes = await request(app.getHttpServer())
+        .post('/api/v1/evidence/upload')
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .field('incidentId', incRes.body.data.id)
+        .attach('file', sampleJpeg, 'photo.jpg')
+        .expect(201);
+
+      const evidenceId = uploadRes.body.data.id;
+      expect(uploadRes.body.data.sha256).toBe(expectedSha256);
+
+      // Verify that verifying integrity returns VERIFIED
+      const verifyRes = await request(app.getHttpServer())
+        .post(`/api/v1/evidence/${evidenceId}/verify`)
+        .set('Authorization', `Bearer ${user.accessToken}`)
+        .expect(200);
+
+      expect(verifyRes.body.data.status).toBe('VERIFIED');
+      expect(verifyRes.body.data.verified).toBe(true);
+
+      // Verify metadata extracted safely without GPS coordinates
+      const meta = uploadRes.body.data.metadata;
+      expect(meta.image.width).toBe(960);
+      expect(meta.image.height).toBe(640);
+      expect(meta.exif?.hasRedactedGps ?? false).toBe(false);
+      expect(JSON.stringify(meta)).not.toContain('GPSLatitude');
+      expect(JSON.stringify(meta)).not.toContain('GPSLongitude');
     });
   });
 });

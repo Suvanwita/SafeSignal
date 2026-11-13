@@ -526,9 +526,12 @@ export function EvidenceVaultView({
                               )}
                             </div>
                             <div className="min-w-0">
-                              <p className="truncate text-sm font-semibold text-slate-900">
+                              <Link
+                                href={`/evidence/${ev.id}`}
+                                className="truncate text-sm font-semibold text-slate-900 hover:text-blue-600 hover:underline block"
+                              >
                                 {ev.title}
-                              </p>
+                              </Link>
                               {ev.description && (
                                 <p className="line-clamp-1 text-xs text-slate-500">
                                   {ev.description}
@@ -626,6 +629,13 @@ export function EvidenceVaultView({
                         {/* Actions */}
                         <TableCell className="text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            <Link
+                              href={`/evidence/${ev.id}`}
+                              className="inline-flex h-8 items-center justify-center rounded-md border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900"
+                              title="View metadata and evidence details"
+                            >
+                              Details
+                            </Link>
                             <Button
                               variant="outline"
                               size="sm"

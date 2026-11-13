@@ -59,6 +59,23 @@ describe('EvidenceService', () => {
     fileSize: 102400,
     sha256:
       'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+    metadata: {
+      file: {
+        sanitizedFilename: 'chat.png',
+        canonicalMimeType: 'image/png',
+        fileSizeBytes: 102400,
+        sha256:
+          'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+        format: 'PNG',
+        uploadedAt: now.toISOString(),
+      },
+      image: {
+        width: 1920,
+        height: 1080,
+        aspectRatio: '16:9',
+        bitDepth: 8,
+      },
+    },
     capturedAt: now,
     createdAt: now,
     updatedAt: now,
@@ -533,6 +550,38 @@ describe('EvidenceService', () => {
       await expect(
         service.updateForUser(userId, evidenceId, { title: 'Hacked' }),
       ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe('getMetadataForUser', () => {
+    it('returns extracted structured metadata for the evidence owner', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(baseEvidence);
+
+      const metadata = await service.getMetadataForUser(userId, evidenceId);
+
+      expect(metadata).toEqual(baseEvidence.metadata);
+      expect(prisma.evidence.findUnique).toHaveBeenCalledWith({
+        where: { id: evidenceId },
+      });
+    });
+
+    it('throws ForbiddenException when metadata is requested by non-owner', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce({
+        ...baseEvidence,
+        userId: otherUserId,
+      });
+
+      await expect(
+        service.getMetadataForUser(userId, evidenceId),
+      ).rejects.toThrow(ForbiddenException);
+    });
+
+    it('throws NotFoundException when evidence record does not exist', async () => {
+      prisma.evidence.findUnique.mockResolvedValueOnce(null);
+
+      await expect(
+        service.getMetadataForUser(userId, evidenceId),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

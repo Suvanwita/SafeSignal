@@ -20,6 +20,7 @@ import {
   EvidenceIntegrityStatus,
   type VerifyEvidenceResponseDto,
 } from './dto/verify-evidence.dto';
+import { extractEvidenceMetadata } from './evidence-metadata-extractor';
 import { validateAndInspectEvidenceFile } from './vault-file-validator';
 import { VaultStorageService } from './vault-storage.service';
 
@@ -71,7 +72,63 @@ export class EvidenceService {
     });
 
     assertOwnedResource(record, userId, 'Evidence');
+
+    // If metadata was not extracted at upload time (e.g. legacy records), extract lazily
+    if (!record.metadata && record.storageKey) {
+      try {
+        const absolutePath = this.vaultStorage.resolveAndValidatePath(
+          record.storageKey,
+        );
+        if (fs.existsSync(absolutePath)) {
+          const buffer = await fs.promises.readFile(absolutePath);
+          const ext = (record.fileName || '').split('.').pop()?.toLowerCase();
+          const format =
+            ext === 'png'
+              ? 'PNG'
+              : ext === 'jpg' || ext === 'jpeg'
+                ? 'JPG'
+                : ext === 'pdf'
+                  ? 'PDF'
+                  : ext === 'txt'
+                    ? 'TXT'
+                    : ext === 'docx'
+                      ? 'DOCX'
+                      : 'OTHER';
+
+          const meta = await extractEvidenceMetadata({
+            buffer,
+            sanitizedFilename: record.fileName || 'evidence',
+            canonicalMimeType: record.mimeType || 'application/octet-stream',
+            fileSize: record.fileSize || buffer.length,
+            format,
+            sha256: record.sha256 || '',
+            uploadTimestamp: record.createdAt.toISOString(),
+          });
+
+          const updated = await this.prisma.evidence.update({
+            where: { id: evidenceId },
+            data: { metadata: meta as unknown as Prisma.InputJsonValue },
+          });
+          return this.toResponseDto(updated);
+        }
+      } catch {
+        // Fallback to existing record
+      }
+    }
+
     return this.toResponseDto(record);
+  }
+
+  /**
+   * Retrieves extracted structured metadata for an evidence record.
+   * Access is strictly restricted to the evidence owner.
+   */
+  async getMetadataForUser(
+    userId: string,
+    evidenceId: string,
+  ): Promise<Prisma.JsonValue | null> {
+    const detail = await this.findOneForUser(userId, evidenceId);
+    return detail.metadata as Prisma.JsonValue | null;
   }
 
   /**
@@ -116,6 +173,18 @@ export class EvidenceService {
         ? dto.title.trim()
         : validated.sanitizedFilename;
 
+    // Extract structured metadata (dimensions, EXIF, PDF, text) while guaranteeing original file is not modified
+    // and sensitive GPS coordinates are redacted for privacy.
+    const extractedMetadata = await extractEvidenceMetadata({
+      buffer: file.buffer,
+      sanitizedFilename: validated.sanitizedFilename,
+      canonicalMimeType: validated.canonicalMimeType,
+      fileSize: validated.fileSize,
+      format: validated.format,
+      sha256: validated.sha256,
+      uploadTimestamp: now.toISOString(),
+    });
+
     try {
       const created = await this.prisma.$transaction(async (tx) => {
         const evidence = await tx.evidence.create({
@@ -132,6 +201,7 @@ export class EvidenceService {
             fileSize: validated.fileSize,
             sha256: validated.sha256,
             capturedAt: capturedAt ?? now,
+            metadata: extractedMetadata as unknown as Prisma.InputJsonValue,
           },
         });
 
@@ -495,6 +565,7 @@ export class EvidenceService {
       fileSize: record.fileSize,
       sha256: record.sha256,
       capturedAt: record.capturedAt,
+      metadata: record.metadata,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
     };

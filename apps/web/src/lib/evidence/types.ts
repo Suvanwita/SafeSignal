@@ -1,3 +1,69 @@
+export interface ImageExifMetadata {
+  make?: string;
+  model?: string;
+  software?: string;
+  dateTimeOriginal?: string;
+  createDate?: string;
+  modifyDate?: string;
+  orientation?: number | string;
+  colorSpace?: string;
+  exposureTime?: string;
+  fNumber?: number | string;
+  iso?: number | string;
+  focalLength?: string;
+  lensModel?: string;
+  flash?: string;
+  whiteBalance?: string;
+  hasRedactedGps: boolean;
+  gpsRedactionNote?: string;
+}
+
+export interface ImageMetadata {
+  width?: number;
+  height?: number;
+  aspectRatio?: string;
+  colorSpace?: string;
+  bitDepth?: number;
+  format: 'PNG' | 'JPG';
+  exif?: ImageExifMetadata;
+}
+
+export interface PdfMetadata {
+  pageCount?: number;
+  title?: string;
+  author?: string;
+  subject?: string;
+  keywords?: string[];
+  creator?: string;
+  producer?: string;
+  creationDate?: string;
+  modificationDate?: string;
+  pdfVersion?: string;
+}
+
+export interface TextMetadata {
+  lineCount: number;
+  wordCount: number;
+  characterCount: number;
+}
+
+export interface EvidenceMetadataJson {
+  file: {
+    fileName: string;
+    mimeType: string;
+    fileSize: number;
+    uploadTimestamp: string;
+    sha256: string;
+    format: 'PNG' | 'JPG' | 'PDF' | 'TXT' | 'DOCX' | 'OTHER';
+  };
+  image?: ImageMetadata;
+  pdf?: PdfMetadata;
+  text?: TextMetadata;
+  docx?: {
+    isZipContainer: boolean;
+  };
+}
+
 export interface EvidenceRecord {
   id: string;
   userId: string;
@@ -11,6 +77,7 @@ export interface EvidenceRecord {
   fileSize: number | null;
   sha256: string | null;
   capturedAt: string | null;
+  metadata?: EvidenceMetadataJson | null;
   createdAt: string;
   updatedAt: string;
 }
